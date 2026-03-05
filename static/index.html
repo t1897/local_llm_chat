@@ -1,0 +1,1846 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Local MLX Chat</title>
+    <style>
+      :root {
+        --bg: #f4f5f7;
+        --panel: #ffffff;
+        --text: #111827;
+        --muted: #6b7280;
+        --border: #d1d5db;
+        --accent: #0f766e;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100vh;
+        font-family: "SF Mono", Menlo, Monaco, "Courier New", monospace;
+        color: var(--text);
+        background: linear-gradient(135deg, #eef2ff 0%, #f4f5f7 55%, #ecfeff 100%);
+        overflow: hidden;
+      }
+
+      .app {
+        width: min(1200px, 100%);
+        height: 100vh;
+        margin: 0 auto;
+        padding: 0 16px;
+      }
+
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 14px;
+        box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+      }
+
+      .app > .card {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .title {
+        margin: 0 0 10px;
+        font-size: 18px;
+      }
+
+      .settings {
+        display: grid;
+        grid-template-columns: repeat(6, minmax(120px, 1fr));
+        gap: 10px;
+        align-items: end;
+      }
+
+      .settings-wide {
+        grid-column: 1 / -1;
+      }
+
+      label {
+        font-size: 12px;
+        color: var(--muted);
+        display: block;
+        margin-bottom: 4px;
+      }
+
+      input,
+      select,
+      textarea,
+      button {
+        width: 100%;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 8px 10px;
+        font-size: 14px;
+        font-family: inherit;
+      }
+
+      textarea {
+        resize: vertical;
+      }
+
+      #systemPrompt {
+        min-height: 86px;
+      }
+
+      .checkbox-line {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 38px;
+      }
+
+      .checkbox-line input {
+        width: auto;
+      }
+
+      .workspace {
+        margin-top: 12px;
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 12px;
+        flex: 1;
+        min-height: 0;
+      }
+
+      .workspace .panel {
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .panel h2 {
+        margin: 0 0 8px;
+        font-size: 15px;
+      }
+
+      .panel textarea {
+        min-height: 340px;
+      }
+
+      .chat-shell {
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .chat-layout {
+        min-height: 0;
+        flex: 1;
+        display: grid;
+        grid-template-columns: 240px 1fr;
+        gap: 10px;
+      }
+
+      .thread-panel {
+        min-height: 0;
+        padding: 10px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: #f8fafc;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .thread-list {
+        min-height: 0;
+        flex: 1;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .thread-row {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 6px;
+        align-items: stretch;
+      }
+
+      .thread-item {
+        width: 100%;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: #ffffff;
+        color: var(--text);
+        text-align: left;
+        padding: 8px;
+      }
+
+      .thread-item.active {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 1px rgba(15, 118, 110, 0.2);
+      }
+
+      .thread-item-title {
+        margin: 0;
+        font-size: 13px;
+        font-weight: 600;
+        line-height: 1.3;
+      }
+
+      .thread-item-meta {
+        margin: 4px 0 0;
+        font-size: 11px;
+        color: var(--muted);
+      }
+
+      .thread-delete {
+        width: auto;
+        min-width: 44px;
+        border: 1px solid #fecaca;
+        border-radius: 8px;
+        background: #fff5f5;
+        color: #991b1b;
+        padding: 8px 10px;
+        font-size: 12px;
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+        transition: opacity 0.14s ease;
+      }
+
+      .thread-row:hover .thread-delete,
+      .thread-row:focus-within .thread-delete {
+        opacity: 1;
+        visibility: visible;
+        pointer-events: auto;
+      }
+
+      .chat-column {
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      #chatFeed {
+        min-height: 0;
+        flex: 1;
+        max-height: none;
+        white-space: normal;
+        overflow-y: auto;
+        background: #fcfcfd;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .chat-row {
+        display: flex;
+      }
+
+      .chat-row.user {
+        justify-content: flex-end;
+      }
+
+      .chat-row.assistant {
+        justify-content: flex-start;
+      }
+
+      .chat-card {
+        width: min(92%, 780px);
+        margin: 0;
+        padding: 8px 10px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: #ffffff;
+      }
+
+      .chat-row.user .chat-card {
+        background: #ecfeff;
+      }
+
+      .chat-row.assistant .chat-card {
+        background: #f8fafc;
+      }
+
+      .chat-role {
+        margin: 0 0 6px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .chat-main {
+        margin: 0;
+        white-space: pre-wrap;
+      }
+
+      .chat-card.editing-target {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 1px rgba(15, 118, 110, 0.2);
+      }
+
+      .message-actions {
+        margin-top: 8px;
+        display: flex;
+        justify-content: flex-end;
+      }
+
+      .message-action-btn {
+        width: auto;
+        padding: 4px 8px;
+        font-size: 12px;
+        line-height: 1.2;
+        background: #334155;
+      }
+
+      .assistant-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin: 0 0 6px;
+      }
+
+      .assistant-title {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .toggle-thought-btn {
+        width: auto;
+        padding: 4px 8px;
+        font-size: 12px;
+        line-height: 1.2;
+        background: #334155;
+      }
+
+      .assistant-content {
+        margin: 0;
+        padding: 10px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: #ffffff;
+        white-space: pre-wrap;
+      }
+
+      .assistant-content.think-content {
+        max-height: min(68vh, 560px);
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      .assistant-content.answer-content {
+        min-height: 90px;
+      }
+
+      .assistant-segment + .assistant-segment {
+        margin-top: 8px;
+      }
+
+      .composer {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .composer-tip {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      #message {
+        width: 100%;
+        min-height: 96px;
+        max-height: 220px;
+        resize: vertical;
+      }
+
+      .actions {
+        margin-top: 10px;
+        display: flex;
+        gap: 10px;
+      }
+
+      button {
+        cursor: pointer;
+        background: var(--accent);
+        color: white;
+        border: none;
+      }
+
+      button.secondary {
+        background: #334155;
+      }
+
+      button.stop {
+        background: #b91c1c;
+      }
+
+      button.thread-item {
+        border: 1px solid var(--border);
+        background: #ffffff;
+        color: var(--text);
+      }
+
+      button.thread-item.active {
+        border-color: var(--accent);
+      }
+
+      button:disabled {
+        opacity: 0.65;
+        cursor: not-allowed;
+      }
+
+      .hint {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      @media (max-width: 900px) {
+        .settings {
+          grid-template-columns: 1fr 1fr;
+        }
+
+        .workspace {
+          grid-template-columns: 1fr;
+        }
+
+        .chat-layout {
+          grid-template-columns: 1fr;
+        }
+
+        .thread-panel {
+          max-height: 180px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <div class="card">
+        <h1 class="title">Local AI Chat (MLX)</h1>
+        <div class="settings">
+          <div>
+            <label for="model">Model</label>
+            <select id="model"></select>
+          </div>
+          <div>
+            <label for="temperature">Temperature</label>
+            <input id="temperature" type="number" min="0" max="2" step="0.1" value="0.7" />
+          </div>
+          <div>
+            <label for="topP">Top P</label>
+            <input id="topP" type="number" min="0" max="1" step="0.05" value="0.9" />
+          </div>
+          <div>
+            <label for="topK">Top K</label>
+            <input id="topK" type="number" min="0" max="5000" step="1" value="40" />
+          </div>
+          <div>
+            <label for="repetitionPenalty">Repetition Penalty</label>
+            <input id="repetitionPenalty" type="number" min="0" max="2" step="0.01" value="1.08" />
+          </div>
+          <div>
+            <label for="repetitionContextSize">Repeat Context</label>
+            <input id="repetitionContextSize" type="number" min="0" max="4096" step="1" value="128" />
+          </div>
+          <div>
+            <label for="maxTokens">Max Tokens</label>
+            <input id="maxTokens" type="number" min="1" max="4096" step="1" value="512" />
+          </div>
+          <div>
+            <label for="responseLanguage">Response Language</label>
+            <select id="responseLanguage">
+              <option value="auto">Auto</option>
+              <option value="zh">中文</option>
+              <option value="en">English</option>
+              <option value="ja">日本語</option>
+              <option value="ko">한국어</option>
+            </select>
+          </div>
+          <div>
+            <label>Streaming</label>
+            <div class="checkbox-line">
+              <input id="streaming" type="checkbox" />
+              <span>Enabled</span>
+            </div>
+          </div>
+          <div>
+            <label>Thinking</label>
+            <div class="checkbox-line">
+              <input id="thinking" type="checkbox" checked />
+              <span>Enabled</span>
+            </div>
+          </div>
+          <div class="settings-wide">
+            <label for="systemPrompt">System Prompt</label>
+            <textarea id="systemPrompt" rows="2" placeholder="例如：你是一个简洁、直接的助手"></textarea>
+          </div>
+        </div>
+
+        <div class="workspace">
+          <div class="panel chat-shell">
+            <div class="chat-layout">
+              <aside class="thread-panel">
+                <h2>会话历史</h2>
+                <div id="threadList" class="thread-list"></div>
+              </aside>
+              <div class="chat-column">
+                <h2>Chat</h2>
+                <div id="chatFeed" class="card"></div>
+                <div class="composer card">
+                  <textarea id="message" placeholder="在这里输入你的问题..."></textarea>
+                  <div class="composer-tip">Enter 发送，Shift/Option/Command + Enter 换行</div>
+                  <div class="actions">
+                    <button id="sendBtn">Send</button>
+                    <button class="stop" id="stopBtn" disabled>Stop</button>
+                    <button class="secondary" id="cancelEditBtn" style="display: none">取消编辑</button>
+                    <button class="secondary" id="newChatBtn">新对话</button>
+                  </div>
+                  <div id="status" class="hint"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+	      </div>
+	    </div>
+
+    <script>
+      const modelEl = document.getElementById("model");
+      const tempEl = document.getElementById("temperature");
+      const topPEl = document.getElementById("topP");
+      const topKEl = document.getElementById("topK");
+      const repetitionPenaltyEl = document.getElementById("repetitionPenalty");
+      const repetitionContextSizeEl = document.getElementById("repetitionContextSize");
+      const maxTokensEl = document.getElementById("maxTokens");
+      const responseLanguageEl = document.getElementById("responseLanguage");
+      const streamingEl = document.getElementById("streaming");
+      const thinkingEl = document.getElementById("thinking");
+      const systemPromptEl = document.getElementById("systemPrompt");
+      const messageEl = document.getElementById("message");
+      const threadListEl = document.getElementById("threadList");
+      const chatFeedEl = document.getElementById("chatFeed");
+      const statusEl = document.getElementById("status");
+      const sendBtn = document.getElementById("sendBtn");
+      const stopBtn = document.getElementById("stopBtn");
+      const cancelEditBtn = document.getElementById("cancelEditBtn");
+      const newChatBtn = document.getElementById("newChatBtn");
+
+      const SYSTEM_PROMPT_STORAGE_KEY = "local_mlx_chat.system_prompt";
+      const TEMPERATURE_STORAGE_KEY = "local_mlx_chat.temperature";
+      const TOP_P_STORAGE_KEY = "local_mlx_chat.top_p";
+      const TOP_K_STORAGE_KEY = "local_mlx_chat.top_k";
+      const REPETITION_PENALTY_STORAGE_KEY = "local_mlx_chat.repetition_penalty";
+      const REPETITION_CONTEXT_SIZE_STORAGE_KEY = "local_mlx_chat.repetition_context_size";
+      const MAX_TOKENS_STORAGE_KEY = "local_mlx_chat.max_tokens";
+      const STREAMING_STORAGE_KEY = "local_mlx_chat.streaming";
+      const RESPONSE_LANGUAGE_STORAGE_KEY = "local_mlx_chat.response_language";
+      const THINKING_MODE_STORAGE_KEY = "local_mlx_chat.enable_thinking";
+      const SESSION_STATE_KEY = "local_mlx_chat.session_state_v2";
+      const LEGACY_HISTORY_KEY = "local_mlx_chat.session_history";
+
+      let conversationHistory = [];
+      let chatMessages = [];
+      let conversationThreads = [];
+      let activeThreadId = "";
+      let nextMessageId = 1;
+      let activeAssistantMessageId = null;
+      let activeAbortController = null;
+      let stopRequestedByUser = false;
+      let autoScrollIfNearBottom = true;
+      let editingUserMessageId = null;
+
+      function setBusy(isBusy) {
+        sendBtn.disabled = isBusy;
+        stopBtn.disabled = !isBusy;
+        newChatBtn.disabled = isBusy;
+        cancelEditBtn.disabled = isBusy;
+      }
+
+      function setEditMode(userMessageId) {
+        editingUserMessageId = userMessageId;
+        sendBtn.textContent = "重新生成";
+        cancelEditBtn.style.display = "";
+      }
+
+      function clearEditMode() {
+        editingUserMessageId = null;
+        sendBtn.textContent = "Send";
+        cancelEditBtn.style.display = "none";
+      }
+
+      function setStatus(text) {
+        statusEl.textContent = text || "";
+      }
+
+      function isNearBottom(el, threshold = 56) {
+        if (!el) return true;
+        return el.scrollHeight - (el.scrollTop + el.clientHeight) <= threshold;
+      }
+
+      function loadSavedSystemPrompt() {
+        try {
+          const saved = localStorage.getItem(SYSTEM_PROMPT_STORAGE_KEY);
+          if (saved !== null) {
+            systemPromptEl.value = saved;
+          }
+        } catch (_) {
+          // Ignore storage errors.
+        }
+      }
+
+      function saveSystemPrompt() {
+        try {
+          localStorage.setItem(SYSTEM_PROMPT_STORAGE_KEY, systemPromptEl.value || "");
+        } catch (_) {
+          // Ignore storage errors.
+        }
+      }
+
+      function loadSavedTemperature() {
+        try {
+          const saved = localStorage.getItem(TEMPERATURE_STORAGE_KEY);
+          if (saved === null) return;
+          const value = Number(saved);
+          if (Number.isFinite(value) && value >= 0 && value <= 2) {
+            tempEl.value = String(value);
+          }
+        } catch (_) {
+          // Ignore storage errors.
+        }
+      }
+
+      function saveTemperature() {
+        try {
+          const value = Number(tempEl.value);
+          if (!Number.isFinite(value) || value < 0 || value > 2) return;
+          localStorage.setItem(TEMPERATURE_STORAGE_KEY, String(value));
+        } catch (_) {
+          // Ignore storage errors.
+        }
+      }
+
+      function loadSavedTopP() {
+        try {
+          const saved = localStorage.getItem(TOP_P_STORAGE_KEY);
+          if (saved === null) return;
+          const value = Number(saved);
+          if (Number.isFinite(value) && value >= 0 && value <= 1) {
+            topPEl.value = String(value);
+          }
+        } catch (_) {
+          // Ignore storage errors.
+        }
+      }
+
+      function saveTopP() {
+        try {
+          const value = Number(topPEl.value);
+          if (!Number.isFinite(value) || value < 0 || value > 1) return;
+          localStorage.setItem(TOP_P_STORAGE_KEY, String(value));
+        } catch (_) {
+          // Ignore storage errors.
+        }
+      }
+
+      function loadSavedTopK() {
+        try {
+          const saved = localStorage.getItem(TOP_K_STORAGE_KEY);
+          if (saved === null) return;
+          const value = Number(saved);
+          if (Number.isInteger(value) && value >= 0 && value <= 5000) {
+            topKEl.value = String(value);
+          }
+        } catch (_) {
+          // Ignore storage errors.
+        }
+      }
+
+      function saveTopK() {
+        try {
+          const value = Number(topKEl.value);
+          if (!Number.isInteger(value) || value < 0 || value > 5000) return;
+          localStorage.setItem(TOP_K_STORAGE_KEY, String(value));
+        } catch (_) {
+          // Ignore storage errors.
+        }
+      }
+
+      function loadSavedRepetitionPenalty() {
+        try {
+          const saved = localStorage.getItem(REPETITION_PENALTY_STORAGE_KEY);
+          if (saved === null) return;
+          const value = Number(saved);
+          if (Number.isFinite(value) && value >= 0 && value <= 2) {
+            repetitionPenaltyEl.value = String(value);
+          }
+        } catch (_) {
+          // Ignore storage errors.
+        }
+      }
+
+      function saveRepetitionPenalty() {
+        try {
+          const value = Number(repetitionPenaltyEl.value);
+          if (!Number.isFinite(value) || value < 0 || value > 2) return;
+          localStorage.setItem(REPETITION_PENALTY_STORAGE_KEY, String(value));
+        } catch (_) {
+          // Ignore storage errors.
+        }
+      }
+
+      function loadSavedRepetitionContextSize() {
+        try {
+          const saved = localStorage.getItem(REPETITION_CONTEXT_SIZE_STORAGE_KEY);
+          if (saved === null) return;
+          const value = Number(saved);
+          if (Number.isInteger(value) && value >= 0 && value <= 4096) {
+            repetitionContextSizeEl.value = String(value);
+          }
+        } catch (_) {
+          // Ignore storage errors.
+        }
+      }
+
+      function saveRepetitionContextSize() {
+        try {
+          const value = Number(repetitionContextSizeEl.value);
+          if (!Number.isInteger(value) || value < 0 || value > 4096) return;
+          localStorage.setItem(REPETITION_CONTEXT_SIZE_STORAGE_KEY, String(value));
+        } catch (_) {
+          // Ignore storage errors.
+        }
+      }
+
+      function loadSavedMaxTokens() {
+        try {
+          const saved = localStorage.getItem(MAX_TOKENS_STORAGE_KEY);
+          if (saved === null) return;
+          const value = Number(saved);
+          if (Number.isInteger(value) && value >= 1 && value <= 4096) {
+            maxTokensEl.value = String(value);
+          }
+        } catch (_) {
+          // Ignore storage errors.
+        }
+      }
+
+      function saveMaxTokens() {
+        try {
+          const value = Number(maxTokensEl.value);
+          if (!Number.isInteger(value) || value < 1 || value > 4096) return;
+          localStorage.setItem(MAX_TOKENS_STORAGE_KEY, String(value));
+        } catch (_) {
+          // Ignore storage errors.
+        }
+      }
+
+      function loadSavedStreaming() {
+        try {
+          const saved = localStorage.getItem(STREAMING_STORAGE_KEY);
+          if (saved === "0") {
+            streamingEl.checked = false;
+          } else if (saved === "1") {
+            streamingEl.checked = true;
+          }
+        } catch (_) {
+          // Ignore storage errors.
+        }
+      }
+
+      function saveStreaming() {
+        try {
+          localStorage.setItem(STREAMING_STORAGE_KEY, streamingEl.checked ? "1" : "0");
+        } catch (_) {
+          // Ignore storage errors.
+        }
+      }
+
+      function loadSavedResponseLanguage() {
+        try {
+          const saved = localStorage.getItem(RESPONSE_LANGUAGE_STORAGE_KEY);
+          if (saved && ["auto", "zh", "en", "ja", "ko"].includes(saved)) {
+            responseLanguageEl.value = saved;
+          }
+        } catch (_) {
+          // Ignore storage errors.
+        }
+      }
+
+      function saveResponseLanguage() {
+        try {
+          localStorage.setItem(RESPONSE_LANGUAGE_STORAGE_KEY, responseLanguageEl.value || "auto");
+        } catch (_) {
+          // Ignore storage errors.
+        }
+      }
+
+      function loadSavedThinkingMode() {
+        try {
+          const saved = localStorage.getItem(THINKING_MODE_STORAGE_KEY);
+          if (saved === "0") {
+            thinkingEl.checked = false;
+          } else if (saved === "1") {
+            thinkingEl.checked = true;
+          }
+        } catch (_) {
+          // Ignore storage errors.
+        }
+      }
+
+      function saveThinkingMode() {
+        try {
+          localStorage.setItem(THINKING_MODE_STORAGE_KEY, thinkingEl.checked ? "1" : "0");
+        } catch (_) {
+          // Ignore storage errors.
+        }
+      }
+
+      const MAX_THREAD_COUNT = 50;
+
+      function sanitizeTurns(items) {
+        if (!Array.isArray(items)) return [];
+        return items
+          .filter((x) => x && (x.role === "user" || x.role === "assistant") && typeof x.content === "string")
+          .map((x) => ({ role: x.role, content: x.content.trim() }))
+          .filter((x) => x.content.length > 0);
+      }
+
+      function sanitizeChatMessages(items) {
+        if (!Array.isArray(items)) return [];
+        const result = [];
+        for (const item of items) {
+          if (!item || (item.role !== "user" && item.role !== "assistant")) continue;
+          if (typeof item.text !== "string") continue;
+          result.push({
+            id: Number.isInteger(item.id) && item.id > 0 ? item.id : 0,
+            role: item.role,
+            text: item.text,
+            showThought: Boolean(item.showThought),
+            stopped: Boolean(item.stopped),
+            thoughtToggled: Boolean(item.thoughtToggled),
+            thoughtScrollTop:
+              Number.isFinite(item.thoughtScrollTop) && item.thoughtScrollTop >= 0
+                ? item.thoughtScrollTop
+                : 0,
+            expectThinking:
+              item.role === "assistant"
+                ? typeof item.expectThinking === "boolean"
+                  ? item.expectThinking
+                  : true
+                : false,
+            completed:
+              item.role === "assistant"
+                ? typeof item.completed === "boolean"
+                  ? item.completed
+                  : true
+                : true,
+          });
+        }
+        return result;
+      }
+
+      function normalizeMessageIds(items, rawNextId) {
+        const messages = sanitizeChatMessages(items);
+        let maxId = 0;
+        for (let i = 0; i < messages.length; i += 1) {
+          if (!messages[i].id) {
+            maxId += 1;
+            messages[i].id = maxId;
+          } else if (messages[i].id > maxId) {
+            maxId = messages[i].id;
+          }
+        }
+        let nextId = Number.isInteger(rawNextId) && rawNextId > 0 ? rawNextId : maxId + 1;
+        nextId = Math.max(nextId, maxId + 1);
+        return { messages, nextId };
+      }
+
+      function createThreadId() {
+        return `thread_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      }
+
+      function trimThreadTitle(text) {
+        const oneLine = (text || "").replace(/\s+/g, " ").trim();
+        if (!oneLine) return "新对话";
+        return oneLine.length > 28 ? `${oneLine.slice(0, 28)}...` : oneLine;
+      }
+
+      function deriveThreadTitle(messages, turns) {
+        const fromMessages = (messages || []).find((x) => x.role === "user" && x.text.trim());
+        if (fromMessages) return trimThreadTitle(fromMessages.text);
+        const fromTurns = (turns || []).find((x) => x.role === "user" && x.content.trim());
+        if (fromTurns) return trimThreadTitle(fromTurns.content);
+        return "新对话";
+      }
+
+      function createEmptyThread() {
+        const now = Date.now();
+        return {
+          id: createThreadId(),
+          title: "新对话",
+          created_at: now,
+          updated_at: now,
+          conversation_history: [],
+          chat_messages: [],
+          next_message_id: 1,
+        };
+      }
+
+      function sanitizeThread(item) {
+        if (!item || typeof item !== "object") return null;
+        const turns = sanitizeTurns(item.conversation_history);
+        const normalized = normalizeMessageIds(item.chat_messages, item.next_message_id);
+        const rawId = typeof item.id === "string" ? item.id.trim() : "";
+        const now = Date.now();
+        const createdAt = Number.isFinite(item.created_at) && item.created_at > 0 ? item.created_at : now;
+        const updatedAt = Number.isFinite(item.updated_at) && item.updated_at > 0 ? item.updated_at : createdAt;
+        return {
+          id: rawId || createThreadId(),
+          title: trimThreadTitle(item.title || deriveThreadTitle(normalized.messages, turns)),
+          created_at: createdAt,
+          updated_at: updatedAt,
+          conversation_history: turns,
+          chat_messages: normalized.messages,
+          next_message_id: normalized.nextId,
+        };
+      }
+
+      function sanitizeThreads(items) {
+        if (!Array.isArray(items)) return [];
+        const dedupe = new Set();
+        const result = [];
+        for (const item of items) {
+          const thread = sanitizeThread(item);
+          if (!thread) continue;
+          if (dedupe.has(thread.id)) continue;
+          dedupe.add(thread.id);
+          result.push(thread);
+        }
+        result.sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
+        return result.slice(0, MAX_THREAD_COUNT);
+      }
+
+      function formatThreadMeta(thread) {
+        const turns = Array.isArray(thread.conversation_history) ? thread.conversation_history.length : 0;
+        const rounds = Math.floor(turns / 2);
+        const date = new Date(thread.updated_at || Date.now());
+        const hh = String(date.getHours()).padStart(2, "0");
+        const mm = String(date.getMinutes()).padStart(2, "0");
+        return `${rounds} 轮 · ${hh}:${mm}`;
+      }
+
+      function renderThreadList() {
+        threadListEl.innerHTML = "";
+        if (!conversationThreads.length) {
+          const empty = document.createElement("div");
+          empty.className = "chat-role";
+          empty.textContent = "暂无历史会话";
+          threadListEl.appendChild(empty);
+          return;
+        }
+
+        for (const thread of conversationThreads) {
+          const row = document.createElement("div");
+          row.className = "thread-row";
+
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = `thread-item${thread.id === activeThreadId ? " active" : ""}`;
+
+          const title = document.createElement("p");
+          title.className = "thread-item-title";
+          title.textContent = thread.title || "新对话";
+          btn.appendChild(title);
+
+          const meta = document.createElement("p");
+          meta.className = "thread-item-meta";
+          meta.textContent = formatThreadMeta(thread);
+          btn.appendChild(meta);
+
+          btn.addEventListener("click", () => {
+            if (activeAbortController) return;
+            if (thread.id === activeThreadId) return;
+            activateThread(thread.id);
+          });
+
+          const delBtn = document.createElement("button");
+          delBtn.type = "button";
+          delBtn.className = "thread-delete";
+          delBtn.textContent = "删除";
+          delBtn.title = "删除该会话";
+          delBtn.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            deleteThread(thread.id);
+          });
+
+          row.appendChild(btn);
+          row.appendChild(delBtn);
+          threadListEl.appendChild(row);
+        }
+      }
+
+      function deleteThread(threadId) {
+        if (activeAbortController) {
+          setStatus("请先停止当前生成，再删除会话。");
+          return;
+        }
+        const index = conversationThreads.findIndex((x) => x.id === threadId);
+        if (index < 0) return;
+        const target = conversationThreads[index];
+
+        const wasActive = target.id === activeThreadId;
+        conversationThreads.splice(index, 1);
+
+        if (!conversationThreads.length) {
+          const fresh = createEmptyThread();
+          conversationThreads = [fresh];
+          activeThreadId = fresh.id;
+          conversationHistory = [];
+          chatMessages = [];
+          nextMessageId = 1;
+          activeAssistantMessageId = null;
+          autoScrollIfNearBottom = true;
+          clearEditMode();
+          messageEl.value = "";
+          saveSessionState({ touch: false });
+          renderChatFeed({ forceBottom: true });
+          setStatus("会话已删除，已创建空白新会话。");
+          return;
+        }
+
+        if (wasActive) {
+          const fallback = conversationThreads[Math.max(0, index - 1)] || conversationThreads[0];
+          activeThreadId = fallback.id;
+          conversationHistory = sanitizeTurns(fallback.conversation_history);
+          const normalized = normalizeMessageIds(fallback.chat_messages, fallback.next_message_id);
+          chatMessages = normalized.messages;
+          nextMessageId = normalized.nextId;
+          activeAssistantMessageId = null;
+          autoScrollIfNearBottom = true;
+          clearEditMode();
+          messageEl.value = "";
+          saveSessionState({ touch: false });
+          renderChatFeed({ forceBottom: true });
+          setStatus(`已删除会话，切换到：${fallback.title}`);
+          return;
+        }
+
+        saveSessionState({ touch: false });
+        setStatus("会话已删除。");
+      }
+
+      function syncCurrentThread(options = {}) {
+        const touch = options.touch !== false;
+        if (!activeThreadId) {
+          const fresh = createEmptyThread();
+          activeThreadId = fresh.id;
+          conversationThreads.unshift(fresh);
+        }
+
+        let thread = conversationThreads.find((x) => x.id === activeThreadId);
+        if (!thread) {
+          thread = createEmptyThread();
+          thread.id = activeThreadId;
+          conversationThreads.unshift(thread);
+        }
+
+        const turns = sanitizeTurns(conversationHistory);
+        const normalized = normalizeMessageIds(chatMessages, nextMessageId);
+        conversationHistory = turns;
+        chatMessages = normalized.messages;
+        nextMessageId = normalized.nextId;
+
+        thread.conversation_history = turns;
+        thread.chat_messages = normalized.messages;
+        thread.next_message_id = normalized.nextId;
+        thread.title = deriveThreadTitle(normalized.messages, turns);
+        if (touch) {
+          thread.updated_at = Date.now();
+        }
+        if (!Number.isFinite(thread.created_at) || thread.created_at <= 0) {
+          thread.created_at = thread.updated_at || Date.now();
+        }
+
+        conversationThreads = sanitizeThreads(conversationThreads);
+      }
+
+      function saveSessionState(options = {}) {
+        syncCurrentThread(options);
+        try {
+          sessionStorage.setItem(
+            SESSION_STATE_KEY,
+            JSON.stringify({
+              active_thread_id: activeThreadId,
+              threads: conversationThreads,
+            }),
+          );
+        } catch (_) {
+          // Ignore storage errors.
+        }
+        renderThreadList();
+      }
+
+      function clearSessionState() {
+        try {
+          sessionStorage.removeItem(SESSION_STATE_KEY);
+          sessionStorage.removeItem(LEGACY_HISTORY_KEY);
+        } catch (_) {
+          // Ignore storage errors.
+        }
+      }
+
+      function activateThread(threadId) {
+        saveSessionState();
+        const target = conversationThreads.find((x) => x.id === threadId);
+        if (!target) return;
+
+        activeThreadId = target.id;
+        conversationHistory = sanitizeTurns(target.conversation_history);
+        const normalized = normalizeMessageIds(target.chat_messages, target.next_message_id);
+        chatMessages = normalized.messages;
+        nextMessageId = normalized.nextId;
+        activeAssistantMessageId = null;
+        autoScrollIfNearBottom = true;
+        clearEditMode();
+
+        saveSessionState({ touch: false });
+        renderChatFeed({ forceBottom: true });
+        setStatus(`已切换到会话：${target.title}`);
+      }
+
+      function loadSessionState() {
+        conversationHistory = [];
+        chatMessages = [];
+        conversationThreads = [];
+        activeThreadId = "";
+        nextMessageId = 1;
+
+        let loaded = false;
+        try {
+          const raw = sessionStorage.getItem(SESSION_STATE_KEY);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed.threads)) {
+              conversationThreads = sanitizeThreads(parsed.threads);
+              if (conversationThreads.length > 0) {
+                const wantedId =
+                  typeof parsed.active_thread_id === "string" ? parsed.active_thread_id.trim() : "";
+                activeThreadId = conversationThreads.some((x) => x.id === wantedId)
+                  ? wantedId
+                  : conversationThreads[0].id;
+                loaded = true;
+              }
+            } else if (Array.isArray(parsed.chat_messages) || Array.isArray(parsed.conversation_history)) {
+              const migrated = sanitizeThread({
+                id: createThreadId(),
+                title: "会话 1",
+                conversation_history: parsed.conversation_history,
+                chat_messages: parsed.chat_messages,
+                next_message_id: parsed.next_message_id,
+                created_at: Date.now(),
+                updated_at: Date.now(),
+              });
+              if (migrated) {
+                conversationThreads = [migrated];
+                activeThreadId = migrated.id;
+                loaded = true;
+              }
+            }
+          }
+        } catch (_) {
+          loaded = false;
+          conversationThreads = [];
+          activeThreadId = "";
+        }
+
+        if (!loaded) {
+          try {
+            const legacyRaw = sessionStorage.getItem(LEGACY_HISTORY_KEY);
+            if (legacyRaw) {
+              const legacyTurns = sanitizeTurns(JSON.parse(legacyRaw));
+              const legacyMessages = legacyTurns.map((turn) => ({
+                id: 0,
+                role: turn.role,
+                text: turn.content,
+                showThought: true,
+                stopped: false,
+                thoughtToggled: false,
+                thoughtScrollTop: 0,
+                expectThinking: turn.role === "assistant",
+                completed: true,
+              }));
+              const normalized = normalizeMessageIds(legacyMessages, 1);
+              const now = Date.now();
+              const migrated = sanitizeThread({
+                id: createThreadId(),
+                title: deriveThreadTitle(normalized.messages, legacyTurns),
+                conversation_history: legacyTurns,
+                chat_messages: normalized.messages,
+                next_message_id: normalized.nextId,
+                created_at: now,
+                updated_at: now,
+              });
+              if (migrated) {
+                conversationThreads = [migrated];
+                activeThreadId = migrated.id;
+                loaded = true;
+              }
+            }
+          } catch (_) {
+            loaded = false;
+          }
+        }
+
+        if (!loaded || !conversationThreads.length) {
+          const fresh = createEmptyThread();
+          conversationThreads = [fresh];
+          activeThreadId = fresh.id;
+        }
+
+        const active = conversationThreads.find((x) => x.id === activeThreadId) || conversationThreads[0];
+        activeThreadId = active.id;
+        conversationHistory = sanitizeTurns(active.conversation_history);
+        const normalized = normalizeMessageIds(active.chat_messages, active.next_message_id);
+        chatMessages = normalized.messages;
+        nextMessageId = normalized.nextId;
+        clearEditMode();
+
+        saveSessionState({ touch: false });
+      }
+
+      async function loadModels() {
+        const resp = await fetch("/api/models");
+        const data = await resp.json();
+        modelEl.innerHTML = "";
+        (data.models || []).forEach((m) => {
+          const option = document.createElement("option");
+          option.value = m.id;
+          option.textContent = m.label;
+          modelEl.appendChild(option);
+        });
+      }
+
+      function payload(message) {
+        return {
+          model: modelEl.value,
+          message: (message || "").trim(),
+          system_prompt: systemPromptEl.value || "",
+          response_language: responseLanguageEl.value || "auto",
+          enable_thinking: Boolean(thinkingEl.checked),
+          temperature: Number(tempEl.value),
+          top_p: Number(topPEl.value),
+          top_k: Number(topKEl.value),
+          repetition_penalty: Number(repetitionPenaltyEl.value),
+          repetition_context_size: Number(repetitionContextSizeEl.value),
+          max_tokens: Number(maxTokensEl.value),
+          history: conversationHistory,
+        };
+      }
+
+      function normalizeReplyText(text) {
+        if (!text) return "";
+        return String(text)
+          .replaceAll("<|im_end|>", "")
+          .replaceAll("<|im_start|>", "")
+          .trim();
+      }
+
+      function parseReplySections(text, options = {}) {
+        const expectThinking = Boolean(options.expectThinking);
+        const completed = options.completed !== false;
+        const cleaned = normalizeReplyText(text);
+        let thought = "";
+        let answer = "";
+        let hasThinkBlock = false;
+
+        const thinkMatch = cleaned.match(/<think>([\s\S]*?)<\/think>/i);
+        if (thinkMatch) {
+          hasThinkBlock = true;
+          thought = (thinkMatch[1] || "").trim();
+          const before = cleaned.slice(0, thinkMatch.index).trim();
+          const after = cleaned.slice((thinkMatch.index || 0) + thinkMatch[0].length).trim();
+          answer = [before, after].filter(Boolean).join("\n\n").trim();
+        } else {
+          const partialThinkMatch = cleaned.match(/<think>([\s\S]*)$/i);
+          if (partialThinkMatch) {
+            hasThinkBlock = true;
+            const start = partialThinkMatch.index || 0;
+            thought = (partialThinkMatch[1] || "").trim();
+            answer = cleaned.slice(0, start).trim();
+          }
+        }
+
+        // Qwen-like templates may place "<think>" in prompt and emit only "</think>".
+        if (!hasThinkBlock) {
+          const thinkCloseMatch = cleaned.match(/<\/think>/i);
+          if (thinkCloseMatch) {
+            hasThinkBlock = true;
+            const splitAt = thinkCloseMatch.index || 0;
+            thought = cleaned.slice(0, splitAt).trim();
+            answer = cleaned.slice(splitAt + thinkCloseMatch[0].length).trim();
+          }
+        }
+
+        const thoughtResponseMatch = thought.match(/(?:^|\n)\s*response\s*:\s*([\s\S]*)$/i);
+        if (thoughtResponseMatch) {
+          const markerStart = thoughtResponseMatch.index || 0;
+          const possibleAnswer = (thoughtResponseMatch[1] || "").trim();
+          thought = thought.slice(0, markerStart).trim();
+          if (!answer && possibleAnswer) {
+            answer = possibleAnswer;
+          }
+        }
+
+        if (!hasThinkBlock && !answer) {
+          // Fallback for outputs that expose reasoning as plain text plus "response:".
+          const plainSplit = cleaned.match(/^([\s\S]*?)\n\s*response\s*:\s*([\s\S]*)$/i);
+          if (plainSplit) {
+            thought = (plainSplit[1] || "").trim();
+            answer = (plainSplit[2] || "").trim();
+          }
+        }
+
+        if (!hasThinkBlock && !answer) {
+          const answerFromRaw = cleaned.match(/(?:^|\n)\s*response\s*:\s*([\s\S]*)$/i);
+          if (answerFromRaw) {
+            answer = (answerFromRaw[1] || "").trim();
+          }
+        }
+
+        if (thought) {
+          thought = thought.replace(/<\/think>\s*$/i, "").trim();
+        }
+
+        if (answer) {
+          answer = answer
+            .replace(/<\/?think>/gi, "")
+            .replace(/^\s*response\s*:\s*/i, "")
+            .trim();
+        }
+
+        // During streaming in thinking mode, treat content as thought until we see "</think>".
+        if (!hasThinkBlock && expectThinking && !completed && cleaned) {
+          hasThinkBlock = true;
+          thought = cleaned;
+          answer = "";
+        }
+
+        // If we already detected a think block, never fall back to full raw text,
+        // otherwise reasoning content leaks into final output.
+        if (!answer && !hasThinkBlock) {
+          answer = cleaned;
+        }
+
+        return { thought, answer, hasThinkBlock };
+      }
+
+      function getAssistantMemoryText(rawText) {
+        const { answer } = parseReplySections(rawText);
+        return (answer || normalizeReplyText(rawText) || "").trim();
+      }
+
+      function addChatMessage(role, text, extra = {}) {
+        const msg = {
+          id: nextMessageId++,
+          role,
+          text: text || "",
+          showThought: Boolean(extra.showThought),
+          stopped: Boolean(extra.stopped),
+          thoughtToggled: Boolean(extra.thoughtToggled),
+          thoughtScrollTop:
+            Number.isFinite(extra.thoughtScrollTop) && extra.thoughtScrollTop >= 0
+              ? extra.thoughtScrollTop
+              : 0,
+          expectThinking: role === "assistant" ? Boolean(extra.expectThinking) : false,
+          completed: role === "assistant" ? Boolean(extra.completed) : true,
+        };
+        chatMessages.push(msg);
+        return msg;
+      }
+
+      function getChatMessageById(messageId) {
+        return chatMessages.find((x) => x.id === messageId) || null;
+      }
+
+      function rebuildConversationHistoryFromMessages(messages) {
+        const turns = [];
+        for (let i = 0; i < messages.length; i += 1) {
+          const userMsg = messages[i];
+          if (!userMsg || userMsg.role !== "user") continue;
+          const assistantMsg = messages[i + 1];
+          if (!assistantMsg || assistantMsg.role !== "assistant") continue;
+          if (assistantMsg.stopped) {
+            i += 1;
+            continue;
+          }
+          const userText = (userMsg.text || "").trim();
+          const assistantText = getAssistantMemoryText(assistantMsg.text || "");
+          if (userText && assistantText) {
+            turns.push({ role: "user", content: userText });
+            turns.push({ role: "assistant", content: assistantText });
+          }
+          i += 1;
+        }
+        return turns;
+      }
+
+      function prepareRegenerationFromUserMessage(userMessageId) {
+        const targetIndex = chatMessages.findIndex(
+          (x) => x.id === userMessageId && x.role === "user",
+        );
+        if (targetIndex < 0) {
+          setStatus("未找到要重试的那一轮提问。");
+          return false;
+        }
+
+        chatMessages = chatMessages.slice(0, targetIndex);
+        const normalized = normalizeMessageIds(chatMessages, nextMessageId);
+        chatMessages = normalized.messages;
+        nextMessageId = normalized.nextId;
+        conversationHistory = rebuildConversationHistoryFromMessages(chatMessages);
+        activeAssistantMessageId = null;
+        autoScrollIfNearBottom = true;
+        saveSessionState({ touch: false });
+        renderChatFeed({ forceBottom: true });
+        return true;
+      }
+
+      function beginEditRetry(userMessageId) {
+        if (activeAbortController) {
+          setStatus("正在停止生成，请等状态变成“已停止生成”后再编辑重试。");
+          return;
+        }
+        const target = getChatMessageById(userMessageId);
+        if (!target || target.role !== "user") return;
+        setEditMode(userMessageId);
+        messageEl.value = target.text || "";
+        messageEl.focus();
+        messageEl.setSelectionRange(messageEl.value.length, messageEl.value.length);
+        renderChatFeed();
+        setStatus("已进入编辑重试模式：修改后点击 Send 重新生成。");
+      }
+
+      function setAssistantDraftText(text) {
+        const msg = getChatMessageById(activeAssistantMessageId);
+        if (!msg) return;
+        msg.text = text || "";
+        renderChatFeed();
+      }
+
+      function appendConversationTurnToMemory(userMessage, assistantRawText) {
+        const userText = (userMessage || "").trim();
+        const assistantText = getAssistantMemoryText(assistantRawText);
+        if (!userText || !assistantText) return;
+        conversationHistory.push({ role: "user", content: userText });
+        conversationHistory.push({ role: "assistant", content: assistantText });
+      }
+
+      function renderAssistantMessage(msg, card) {
+        const { thought, answer, hasThinkBlock } = parseReplySections(msg.text, {
+          expectThinking: Boolean(msg.expectThinking),
+          completed: msg.completed !== false,
+        });
+
+        if (thought || hasThinkBlock) {
+          if (!msg.thoughtToggled && !msg.showThought) {
+            msg.showThought = true;
+          }
+          const thoughtHeader = document.createElement("div");
+          thoughtHeader.className = "assistant-header";
+
+          const thoughtTitle = document.createElement("div");
+          thoughtTitle.className = "assistant-title";
+          thoughtTitle.textContent = "思考过程";
+          thoughtHeader.appendChild(thoughtTitle);
+
+          const toggleBtn = document.createElement("button");
+          toggleBtn.type = "button";
+          toggleBtn.className = "toggle-thought-btn";
+          toggleBtn.textContent = msg.showThought ? "折叠思考" : "展开思考";
+          toggleBtn.addEventListener("click", () => {
+            msg.showThought = !msg.showThought;
+            msg.thoughtToggled = true;
+            saveSessionState();
+            renderChatFeed();
+          });
+          thoughtHeader.appendChild(toggleBtn);
+          card.appendChild(thoughtHeader);
+
+          if (msg.showThought) {
+            const thoughtContent = document.createElement("pre");
+            thoughtContent.className = "assistant-content think-content assistant-segment";
+            thoughtContent.textContent = thought || "（模型未输出可见思考内容）";
+            thoughtContent.addEventListener("scroll", () => {
+              msg.thoughtScrollTop = thoughtContent.scrollTop;
+            });
+            card.appendChild(thoughtContent);
+            if (msg.thoughtScrollTop > 0) {
+              thoughtContent.scrollTop = msg.thoughtScrollTop;
+            }
+          }
+        }
+
+        const answerTitle = document.createElement("div");
+        answerTitle.className = "assistant-title assistant-segment";
+        answerTitle.textContent = "最终输出";
+        card.appendChild(answerTitle);
+
+        const answerContent = document.createElement("pre");
+        answerContent.className = "assistant-content answer-content";
+        answerContent.textContent = answer || (msg.completed === false ? "（等待最终输出...）" : "");
+        card.appendChild(answerContent);
+
+        if (msg.stopped) {
+          const stoppedHint = document.createElement("div");
+          stoppedHint.className = "chat-role";
+          stoppedHint.style.marginTop = "6px";
+          stoppedHint.textContent = "已停止";
+          card.appendChild(stoppedHint);
+        }
+      }
+
+      function renderChatFeed(options = {}) {
+        const forceBottom = Boolean(options.forceBottom);
+        const prevScrollTop = chatFeedEl.scrollTop;
+        const wasNearBottom = isNearBottom(chatFeedEl);
+
+        chatFeedEl.innerHTML = "";
+
+        if (!chatMessages.length) {
+          const empty = document.createElement("div");
+          empty.className = "chat-role";
+          empty.textContent = "开始新对话吧。";
+          chatFeedEl.appendChild(empty);
+          chatFeedEl.scrollTop = 0;
+          autoScrollIfNearBottom = true;
+          return;
+        }
+
+        for (const msg of chatMessages) {
+          const row = document.createElement("div");
+          row.className = `chat-row ${msg.role}`;
+
+          const card = document.createElement("div");
+          card.className = "chat-card";
+          if (msg.id === editingUserMessageId) {
+            card.classList.add("editing-target");
+          }
+
+          const role = document.createElement("div");
+          role.className = "chat-role";
+          role.textContent = msg.role === "user" ? "你" : "助手";
+          card.appendChild(role);
+
+          if (msg.role === "assistant") {
+            renderAssistantMessage(msg, card);
+          } else {
+            const content = document.createElement("pre");
+            content.className = "chat-main";
+            content.textContent = msg.text || "";
+            card.appendChild(content);
+
+            const actions = document.createElement("div");
+            actions.className = "message-actions";
+            const editBtn = document.createElement("button");
+            editBtn.type = "button";
+            editBtn.className = "message-action-btn";
+            editBtn.textContent = msg.id === editingUserMessageId ? "编辑中" : "编辑重试";
+            if (activeAbortController) {
+              editBtn.title = "正在停止生成，请稍候";
+            }
+            editBtn.addEventListener("click", () => {
+              beginEditRetry(msg.id);
+            });
+            actions.appendChild(editBtn);
+            card.appendChild(actions);
+          }
+
+          row.appendChild(card);
+          chatFeedEl.appendChild(row);
+        }
+
+        if (forceBottom || (autoScrollIfNearBottom && wasNearBottom)) {
+          chatFeedEl.scrollTop = chatFeedEl.scrollHeight;
+        } else {
+          // User is reading history: lock viewport, do not shift with streaming growth.
+          chatFeedEl.scrollTop = prevScrollTop;
+        }
+        autoScrollIfNearBottom = isNearBottom(chatFeedEl);
+      }
+
+      async function readError(resp) {
+        try {
+          const data = await resp.json();
+          if (data && typeof data.detail === "string") {
+            return data.detail;
+          }
+          return JSON.stringify(data);
+        } catch (_) {
+          return await resp.text();
+        }
+      }
+
+      async function sendOnce(data, signal) {
+        const resp = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+          signal,
+        });
+        if (!resp.ok) {
+          throw new Error(await readError(resp));
+        }
+        const json = await resp.json();
+        return {
+          text: json.reply || "",
+          stopped: Boolean(json.stopped),
+        };
+      }
+
+      async function sendStream(data, signal) {
+        const resp = await fetch("/api/chat/stream", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+          signal,
+        });
+        if (!resp.ok || !resp.body) {
+          throw new Error(await readError(resp));
+        }
+
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let buffer = "";
+        let rawReplyText = "";
+        let stopped = false;
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          const blocks = buffer.split("\n\n");
+          buffer = blocks.pop() || "";
+
+          for (const block of blocks) {
+            const lines = block.split("\n");
+            let eventName = "message";
+            let dataLine = "";
+            for (const line of lines) {
+              if (line.startsWith("event:")) eventName = line.slice(6).trim();
+              if (line.startsWith("data:")) dataLine += line.slice(5).trim();
+            }
+            if (!dataLine) continue;
+            const dataObj = JSON.parse(dataLine);
+
+            if (eventName === "token") {
+              rawReplyText += dataObj.text || "";
+              setAssistantDraftText(rawReplyText);
+            } else if (eventName === "done") {
+              rawReplyText = dataObj.text || rawReplyText;
+              setAssistantDraftText(rawReplyText);
+            } else if (eventName === "stopped") {
+              stopped = true;
+              rawReplyText = dataObj.text || rawReplyText;
+              setAssistantDraftText(rawReplyText);
+            } else if (eventName === "error") {
+              throw new Error(dataObj.message || "streaming failed");
+            }
+          }
+        }
+
+        return { text: rawReplyText, stopped };
+      }
+
+      sendBtn.addEventListener("click", async () => {
+        const userMessage = messageEl.value.trim();
+        if (!userMessage) {
+          setStatus("请输入消息。");
+          return;
+        }
+        const editTargetId = editingUserMessageId;
+        if (editTargetId !== null) {
+          const ok = prepareRegenerationFromUserMessage(editTargetId);
+          if (!ok) return;
+        }
+        clearEditMode();
+
+        // Clear input immediately after send for chat-like behavior.
+        messageEl.value = "";
+        setBusy(true);
+        stopRequestedByUser = false;
+        activeAbortController = new AbortController();
+
+        addChatMessage("user", userMessage);
+        const assistantDraft = addChatMessage("assistant", "", {
+          showThought: true,
+          expectThinking: Boolean(thinkingEl.checked),
+          completed: false,
+        });
+        activeAssistantMessageId = assistantDraft.id;
+        renderChatFeed({ forceBottom: true });
+        saveSessionState();
+
+        setStatus("Generating...（首次运行可能会下载模型，可能需要几分钟）");
+
+        try {
+          const data = payload(userMessage);
+          let result = { text: "", stopped: false };
+          if (streamingEl.checked) {
+            result = await sendStream(data, activeAbortController.signal);
+          } else {
+            result = await sendOnce(data, activeAbortController.signal);
+            setAssistantDraftText(result.text);
+          }
+
+          const assistantMessage = getChatMessageById(activeAssistantMessageId);
+          if (assistantMessage) {
+            assistantMessage.text = result.text || assistantMessage.text;
+            assistantMessage.stopped = Boolean(result.stopped || stopRequestedByUser);
+            assistantMessage.completed = true;
+          }
+
+          if (result.stopped || stopRequestedByUser) {
+            setStatus("已停止生成。");
+          } else {
+            appendConversationTurnToMemory(userMessage, result.text);
+            setStatus(`Done · 当前会话 ${Math.floor(conversationHistory.length / 2)} 轮`);
+          }
+        } catch (err) {
+          if (stopRequestedByUser || (err && err.name === "AbortError")) {
+            const assistantMessage = getChatMessageById(activeAssistantMessageId);
+            if (assistantMessage) {
+              assistantMessage.stopped = true;
+              assistantMessage.completed = true;
+            }
+            setStatus("已停止生成。");
+          } else {
+            // Restore input on non-stop errors so user can retry quickly.
+            messageEl.value = userMessage;
+            setStatus("Error: " + (err.message || String(err)));
+            const assistantMessage = getChatMessageById(activeAssistantMessageId);
+            if (assistantMessage) {
+              assistantMessage.completed = true;
+            }
+          }
+        } finally {
+          renderChatFeed();
+          saveSessionState();
+          activeAssistantMessageId = null;
+          activeAbortController = null;
+          stopRequestedByUser = false;
+          setBusy(false);
+        }
+      });
+
+      messageEl.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        if (event.isComposing) return;
+        if (event.shiftKey || event.altKey || event.metaKey || event.ctrlKey) return;
+        event.preventDefault();
+        if (!sendBtn.disabled) {
+          sendBtn.click();
+        }
+      });
+
+      stopBtn.addEventListener("click", async () => {
+        if (!activeAbortController) return;
+        stopRequestedByUser = true;
+        setStatus("正在停止...");
+        try {
+          await fetch("/api/stop", { method: "POST" });
+        } catch (_) {
+          // Ignore network errors here; local abort still stops current request.
+        }
+        activeAbortController.abort();
+      });
+
+      newChatBtn.addEventListener("click", () => {
+        if (activeAbortController) return;
+        const hasCurrentContent = conversationHistory.length > 0 || chatMessages.length > 0;
+        if (!hasCurrentContent) {
+          clearEditMode();
+          setStatus("当前已是空白新对话。");
+          return;
+        }
+
+        saveSessionState();
+
+        const fresh = createEmptyThread();
+        conversationThreads.unshift(fresh);
+        activeThreadId = fresh.id;
+        messageEl.value = "";
+        conversationHistory = [];
+        chatMessages = [];
+        nextMessageId = 1;
+        activeAssistantMessageId = null;
+        autoScrollIfNearBottom = true;
+        clearEditMode();
+        saveSessionState({ touch: false });
+        renderChatFeed({ forceBottom: true });
+        setStatus("已开启新对话，可在左侧继续历史会话。");
+      });
+
+      cancelEditBtn.addEventListener("click", () => {
+        if (activeAbortController) return;
+        clearEditMode();
+        messageEl.value = "";
+        renderChatFeed();
+        setStatus("已取消编辑重试。");
+      });
+
+      chatFeedEl.addEventListener("scroll", () => {
+        autoScrollIfNearBottom = isNearBottom(chatFeedEl);
+      });
+
+      systemPromptEl.addEventListener("input", saveSystemPrompt);
+      tempEl.addEventListener("input", saveTemperature);
+      tempEl.addEventListener("change", saveTemperature);
+      topPEl.addEventListener("input", saveTopP);
+      topPEl.addEventListener("change", saveTopP);
+      topKEl.addEventListener("input", saveTopK);
+      topKEl.addEventListener("change", saveTopK);
+      repetitionPenaltyEl.addEventListener("input", saveRepetitionPenalty);
+      repetitionPenaltyEl.addEventListener("change", saveRepetitionPenalty);
+      repetitionContextSizeEl.addEventListener("input", saveRepetitionContextSize);
+      repetitionContextSizeEl.addEventListener("change", saveRepetitionContextSize);
+      maxTokensEl.addEventListener("input", saveMaxTokens);
+      maxTokensEl.addEventListener("change", saveMaxTokens);
+      streamingEl.addEventListener("change", saveStreaming);
+      responseLanguageEl.addEventListener("change", saveResponseLanguage);
+      thinkingEl.addEventListener("change", saveThinkingMode);
+      loadSavedSystemPrompt();
+      loadSavedTemperature();
+      loadSavedTopP();
+      loadSavedTopK();
+      loadSavedRepetitionPenalty();
+      loadSavedRepetitionContextSize();
+      loadSavedMaxTokens();
+      loadSavedStreaming();
+      loadSavedResponseLanguage();
+      loadSavedThinkingMode();
+      loadSessionState();
+      renderChatFeed({ forceBottom: true });
+      setBusy(false);
+
+      if (conversationThreads.length > 1 || conversationHistory.length > 0) {
+        setStatus(`已恢复 ${conversationThreads.length} 个会话（关闭浏览器后自动清空）`);
+      }
+
+      loadModels().catch((err) => {
+        setStatus("无法加载模型列表: " + (err.message || String(err)));
+      });
+    </script>
+  </body>
+</html>
