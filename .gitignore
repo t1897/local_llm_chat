@@ -2,3 +2,7 @@
 __pycache__/
 *.pyc
 .model_overrides/
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
