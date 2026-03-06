@@ -104,6 +104,29 @@
         width: auto;
       }
 
+      .preset-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .preset-actions button {
+        width: auto;
+        min-width: 112px;
+      }
+
+      .model-actions {
+        display: grid;
+        grid-template-columns: minmax(260px, 1fr) auto auto;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .model-actions button {
+        width: auto;
+        min-width: 98px;
+      }
+
       .workspace {
         margin-top: 12px;
         display: grid;
@@ -409,6 +432,14 @@
           grid-template-columns: 1fr 1fr;
         }
 
+        .model-actions {
+          grid-template-columns: 1fr 1fr;
+        }
+
+        .model-actions input {
+          grid-column: 1 / -1;
+        }
+
         .workspace {
           grid-template-columns: 1fr;
         }
@@ -429,8 +460,28 @@
         <h1 class="title">Local AI Chat (MLX)</h1>
         <div class="settings">
           <div>
+            <label for="presetSelect">参数预设</label>
+            <select id="presetSelect"></select>
+          </div>
+          <div>
+            <label for="presetName">预设名称</label>
+            <input id="presetName" type="text" placeholder="例如：平衡模式" />
+          </div>
+          <div>
             <label for="model">Model</label>
             <select id="model"></select>
+          </div>
+          <div class="settings-wide">
+            <label for="customModelId">模型管理（自定义模型 ID）</label>
+            <div class="model-actions">
+              <input
+                id="customModelId"
+                type="text"
+                placeholder="例如：mlx-community/Llama-3.2-3B-Instruct-4bit"
+              />
+              <button type="button" class="secondary" id="addModelBtn">添加模型</button>
+              <button type="button" class="secondary" id="removeModelBtn">删除当前模型</button>
+            </div>
           </div>
           <div>
             <label for="temperature">Temperature</label>
@@ -481,6 +532,14 @@
             </div>
           </div>
           <div class="settings-wide">
+            <label>预设操作</label>
+            <div class="preset-actions">
+              <button type="button" class="secondary" id="savePresetBtn">保存新预设</button>
+              <button type="button" class="secondary" id="updatePresetBtn">覆盖当前预设</button>
+              <button type="button" class="secondary" id="deletePresetBtn">删除当前预设</button>
+            </div>
+          </div>
+          <div class="settings-wide">
             <label for="systemPrompt">System Prompt</label>
             <textarea id="systemPrompt" rows="2" placeholder="例如：你是一个简洁、直接的助手"></textarea>
           </div>
@@ -516,7 +575,12 @@
 
     <script>
       const modelEl = document.getElementById("model");
+      const presetSelectEl = document.getElementById("presetSelect");
+      const presetNameEl = document.getElementById("presetName");
       const tempEl = document.getElementById("temperature");
+      const customModelIdEl = document.getElementById("customModelId");
+      const addModelBtn = document.getElementById("addModelBtn");
+      const removeModelBtn = document.getElementById("removeModelBtn");
       const topPEl = document.getElementById("topP");
       const topKEl = document.getElementById("topK");
       const repetitionPenaltyEl = document.getElementById("repetitionPenalty");
@@ -534,6 +598,9 @@
       const stopBtn = document.getElementById("stopBtn");
       const cancelEditBtn = document.getElementById("cancelEditBtn");
       const newChatBtn = document.getElementById("newChatBtn");
+      const savePresetBtn = document.getElementById("savePresetBtn");
+      const updatePresetBtn = document.getElementById("updatePresetBtn");
+      const deletePresetBtn = document.getElementById("deletePresetBtn");
 
       const SYSTEM_PROMPT_STORAGE_KEY = "local_mlx_chat.system_prompt";
       const TEMPERATURE_STORAGE_KEY = "local_mlx_chat.temperature";
@@ -547,10 +614,18 @@
       const THINKING_MODE_STORAGE_KEY = "local_mlx_chat.enable_thinking";
       const SESSION_STATE_KEY = "local_mlx_chat.session_state_v2";
       const LEGACY_HISTORY_KEY = "local_mlx_chat.session_history";
+      const PRESET_LIST_STORAGE_KEY = "local_mlx_chat.parameter_presets_v1";
+      const ACTIVE_PRESET_STORAGE_KEY = "local_mlx_chat.active_parameter_preset_v1";
+      const CUSTOM_MODELS_STORAGE_KEY = "local_mlx_chat.custom_models_v1";
+      const SELECTED_MODEL_STORAGE_KEY = "local_mlx_chat.selected_model_v1";
 
       let conversationHistory = [];
       let chatMessages = [];
       let conversationThreads = [];
+      let parameterPresets = [];
+      let activePresetId = "";
+      let serverModels = [];
+      let customModels = [];
       let activeThreadId = "";
       let nextMessageId = 1;
       let activeAssistantMessageId = null;
@@ -580,6 +655,13 @@
 
       function setStatus(text) {
         statusEl.textContent = text || "";
+      }
+
+      function formatGenerationStats(tokens, elapsedSeconds) {
+        const safeTokens = Number.isFinite(tokens) && tokens >= 0 ? Math.round(tokens) : 0;
+        const safeElapsed = Number.isFinite(elapsedSeconds) && elapsedSeconds > 0 ? elapsedSeconds : 0;
+        const tps = safeElapsed > 0 ? safeTokens / safeElapsed : 0;
+        return `${safeTokens} tok · ${tps.toFixed(1)} tok/s`;
       }
 
       function isNearBottom(el, threshold = 56) {
@@ -805,7 +887,428 @@
         }
       }
 
+      function persistCurrentSettings() {
+        saveSystemPrompt();
+        saveTemperature();
+        saveTopP();
+        saveTopK();
+        saveRepetitionPenalty();
+        saveRepetitionContextSize();
+        saveMaxTokens();
+        saveStreaming();
+        saveResponseLanguage();
+        saveThinkingMode();
+      }
+
+      function normalizeModelId(raw) {
+        if (typeof raw !== "string") return "";
+        return raw.trim();
+      }
+
+      function sanitizeCustomModels(items) {
+        if (!Array.isArray(items)) return [];
+        const dedupe = new Set();
+        const result = [];
+        for (const item of items) {
+          const modelId = normalizeModelId(item);
+          if (!modelId) continue;
+          const key = modelId.toLowerCase();
+          if (dedupe.has(key)) continue;
+          dedupe.add(key);
+          result.push(modelId);
+        }
+        return result.slice(0, 80);
+      }
+
+      function saveSelectedModel() {
+        try {
+          localStorage.setItem(SELECTED_MODEL_STORAGE_KEY, modelEl.value || "");
+        } catch (_) {
+          // Ignore storage errors.
+        }
+      }
+
+      function loadSelectedModel() {
+        try {
+          return normalizeModelId(localStorage.getItem(SELECTED_MODEL_STORAGE_KEY) || "");
+        } catch (_) {
+          return "";
+        }
+      }
+
+      function saveCustomModelState() {
+        try {
+          localStorage.setItem(CUSTOM_MODELS_STORAGE_KEY, JSON.stringify(customModels));
+        } catch (_) {
+          // Ignore storage errors.
+        }
+      }
+
+      function loadCustomModelState() {
+        customModels = [];
+        try {
+          const raw = localStorage.getItem(CUSTOM_MODELS_STORAGE_KEY);
+          if (!raw) return;
+          customModels = sanitizeCustomModels(JSON.parse(raw));
+        } catch (_) {
+          customModels = [];
+        }
+      }
+
+      function isCustomModelId(modelId) {
+        const key = normalizeModelId(modelId).toLowerCase();
+        if (!key) return false;
+        return customModels.some((item) => item.toLowerCase() === key);
+      }
+
+      function getCombinedModelOptions() {
+        const options = [];
+        const seen = new Set();
+        const pushOption = (id, label, source) => {
+          const modelId = normalizeModelId(id);
+          if (!modelId) return;
+          const key = modelId.toLowerCase();
+          if (seen.has(key)) return;
+          seen.add(key);
+          options.push({ id: modelId, label: label || modelId, source });
+        };
+
+        for (const item of serverModels) {
+          pushOption(item.id, item.label, "server");
+        }
+        for (const modelId of customModels) {
+          pushOption(modelId, `${modelId} (custom)`, "custom");
+        }
+        return options;
+      }
+
+      function renderModelOptions(preferredModel = "") {
+        const previous = normalizeModelId(preferredModel || modelEl.value || loadSelectedModel());
+        const options = getCombinedModelOptions();
+        modelEl.innerHTML = "";
+
+        for (const item of options) {
+          const option = document.createElement("option");
+          option.value = item.id;
+          option.textContent = item.label;
+          modelEl.appendChild(option);
+        }
+
+        if (!options.length) {
+          saveSelectedModel();
+          return false;
+        }
+
+        const hasPrevious = options.some((item) => item.id === previous);
+        modelEl.value = hasPrevious ? previous : options[0].id;
+        saveSelectedModel();
+        return hasPrevious;
+      }
+
+      function addCustomModel(modelId) {
+        const normalized = normalizeModelId(modelId);
+        if (!normalized) return false;
+        if (isCustomModelId(normalized)) return false;
+        customModels.unshift(normalized);
+        customModels = sanitizeCustomModels(customModels);
+        saveCustomModelState();
+        return true;
+      }
+
+      function removeCustomModel(modelId) {
+        const key = normalizeModelId(modelId).toLowerCase();
+        if (!key) return false;
+        const index = customModels.findIndex((item) => item.toLowerCase() === key);
+        if (index < 0) return false;
+        customModels.splice(index, 1);
+        saveCustomModelState();
+        return true;
+      }
+
+      function hasModelOption(modelId) {
+        if (!modelId) return false;
+        return Array.from(modelEl.options || []).some((option) => option.value === modelId);
+      }
+
+      function normalizeNumber(value, min, max, fallback) {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return fallback;
+        if (n < min || n > max) return fallback;
+        return n;
+      }
+
+      function normalizeInteger(value, min, max, fallback) {
+        const n = Number(value);
+        if (!Number.isInteger(n)) return fallback;
+        if (n < min || n > max) return fallback;
+        return n;
+      }
+
+      function collectCurrentSettingsSnapshot() {
+        return {
+          model: modelEl.value || "",
+          system_prompt: systemPromptEl.value || "",
+          response_language: responseLanguageEl.value || "auto",
+          enable_thinking: Boolean(thinkingEl.checked),
+          temperature: normalizeNumber(tempEl.value, 0, 2, 0.7),
+          top_p: normalizeNumber(topPEl.value, 0, 1, 0.9),
+          top_k: normalizeInteger(topKEl.value, 0, 5000, 40),
+          repetition_penalty: normalizeNumber(repetitionPenaltyEl.value, 0, 2, 1.08),
+          repetition_context_size: normalizeInteger(repetitionContextSizeEl.value, 0, 4096, 128),
+          max_tokens: normalizeInteger(maxTokensEl.value, 1, 4096, 512),
+          streaming: Boolean(streamingEl.checked),
+        };
+      }
+
+      function normalizeSettingsSnapshot(raw) {
+        const data = raw && typeof raw === "object" ? raw : {};
+        const responseLanguage = typeof data.response_language === "string" ? data.response_language : "auto";
+        return {
+          model: typeof data.model === "string" ? data.model.trim() : "",
+          system_prompt: typeof data.system_prompt === "string" ? data.system_prompt : "",
+          response_language: ["auto", "zh", "en", "ja", "ko"].includes(responseLanguage)
+            ? responseLanguage
+            : "auto",
+          enable_thinking: typeof data.enable_thinking === "boolean" ? data.enable_thinking : true,
+          temperature: normalizeNumber(data.temperature, 0, 2, 0.7),
+          top_p: normalizeNumber(data.top_p, 0, 1, 0.9),
+          top_k: normalizeInteger(data.top_k, 0, 5000, 40),
+          repetition_penalty: normalizeNumber(data.repetition_penalty, 0, 2, 1.08),
+          repetition_context_size: normalizeInteger(data.repetition_context_size, 0, 4096, 128),
+          max_tokens: normalizeInteger(data.max_tokens, 1, 4096, 512),
+          streaming: typeof data.streaming === "boolean" ? data.streaming : true,
+        };
+      }
+
+      function applySettingsSnapshot(rawSnapshot, options = {}) {
+        const snapshot = normalizeSettingsSnapshot(rawSnapshot);
+        const persist = options.persist !== false;
+        let skippedModel = "";
+
+        if (snapshot.model) {
+          if (hasModelOption(snapshot.model)) {
+            modelEl.value = snapshot.model;
+          } else {
+            const added = addCustomModel(snapshot.model);
+            if (added) {
+              renderModelOptions(snapshot.model);
+            }
+            if (hasModelOption(snapshot.model)) {
+              modelEl.value = snapshot.model;
+            } else {
+              skippedModel = snapshot.model;
+            }
+          }
+        }
+
+        systemPromptEl.value = snapshot.system_prompt;
+        responseLanguageEl.value = snapshot.response_language;
+        thinkingEl.checked = snapshot.enable_thinking;
+        tempEl.value = String(snapshot.temperature);
+        topPEl.value = String(snapshot.top_p);
+        topKEl.value = String(snapshot.top_k);
+        repetitionPenaltyEl.value = String(snapshot.repetition_penalty);
+        repetitionContextSizeEl.value = String(snapshot.repetition_context_size);
+        maxTokensEl.value = String(snapshot.max_tokens);
+        streamingEl.checked = snapshot.streaming;
+
+        if (persist) {
+          persistCurrentSettings();
+          saveSelectedModel();
+        }
+
+        return { skippedModel };
+      }
+
       const MAX_THREAD_COUNT = 50;
+      const MAX_PRESET_COUNT = 40;
+
+      function createPresetId() {
+        return `preset_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      }
+
+      function sanitizePreset(item) {
+        if (!item || typeof item !== "object") return null;
+        const rawName = typeof item.name === "string" ? item.name.trim() : "";
+        if (!rawName) return null;
+        const now = Date.now();
+        const createdAt = Number.isFinite(item.created_at) && item.created_at > 0 ? item.created_at : now;
+        const updatedAt = Number.isFinite(item.updated_at) && item.updated_at > 0 ? item.updated_at : createdAt;
+        return {
+          id: typeof item.id === "string" && item.id.trim() ? item.id.trim() : createPresetId(),
+          name: rawName.length > 36 ? `${rawName.slice(0, 36)}...` : rawName,
+          values: normalizeSettingsSnapshot(item.values),
+          created_at: createdAt,
+          updated_at: updatedAt,
+        };
+      }
+
+      function sanitizePresets(items) {
+        if (!Array.isArray(items)) return [];
+        const dedupe = new Set();
+        const result = [];
+        for (const item of items) {
+          const preset = sanitizePreset(item);
+          if (!preset) continue;
+          if (dedupe.has(preset.id)) continue;
+          dedupe.add(preset.id);
+          result.push(preset);
+        }
+        result.sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
+        return result.slice(0, MAX_PRESET_COUNT);
+      }
+
+      function findPresetById(presetId) {
+        return parameterPresets.find((preset) => preset.id === presetId) || null;
+      }
+
+      function renderPresetSelect() {
+        const previous = activePresetId;
+        presetSelectEl.innerHTML = "";
+
+        const emptyOption = document.createElement("option");
+        emptyOption.value = "";
+        emptyOption.textContent = "未选择（使用当前参数）";
+        presetSelectEl.appendChild(emptyOption);
+
+        for (const preset of parameterPresets) {
+          const option = document.createElement("option");
+          option.value = preset.id;
+          option.textContent = preset.name;
+          presetSelectEl.appendChild(option);
+        }
+
+        const validActive = previous && parameterPresets.some((preset) => preset.id === previous);
+        activePresetId = validActive ? previous : "";
+        presetSelectEl.value = activePresetId;
+        updatePresetBtn.disabled = !activePresetId;
+        deletePresetBtn.disabled = !activePresetId;
+      }
+
+      function savePresetState() {
+        try {
+          localStorage.setItem(PRESET_LIST_STORAGE_KEY, JSON.stringify(parameterPresets));
+          localStorage.setItem(ACTIVE_PRESET_STORAGE_KEY, activePresetId || "");
+        } catch (_) {
+          // Ignore storage errors.
+        }
+      }
+
+      function loadPresetState() {
+        parameterPresets = [];
+        activePresetId = "";
+        try {
+          const raw = localStorage.getItem(PRESET_LIST_STORAGE_KEY);
+          if (raw) {
+            parameterPresets = sanitizePresets(JSON.parse(raw));
+          }
+          const rawActive = localStorage.getItem(ACTIVE_PRESET_STORAGE_KEY);
+          if (rawActive && parameterPresets.some((preset) => preset.id === rawActive)) {
+            activePresetId = rawActive;
+          }
+        } catch (_) {
+          parameterPresets = [];
+          activePresetId = "";
+        }
+        renderPresetSelect();
+      }
+
+      function applyPresetById(presetId, options = {}) {
+        const preset = findPresetById(presetId);
+        if (!preset) return false;
+        activePresetId = preset.id;
+        const result = applySettingsSnapshot(preset.values, { persist: true });
+        presetNameEl.value = preset.name;
+        savePresetState();
+        renderPresetSelect();
+        if (!options.silent) {
+          if (result.skippedModel) {
+            setStatus(`已应用预设：${preset.name}（模型 ${result.skippedModel} 不在当前列表）`);
+          } else {
+            setStatus(`已应用预设：${preset.name}`);
+          }
+        }
+        return true;
+      }
+
+      function saveNewPreset() {
+        const rawName = (presetNameEl.value || "").trim();
+        if (!rawName) {
+          setStatus("请输入预设名称后再保存。");
+          return;
+        }
+        const duplicate = parameterPresets.find(
+          (preset) => preset.name.toLowerCase() === rawName.toLowerCase(),
+        );
+        if (duplicate) {
+          setStatus("预设名称已存在。请换个名称，或先选择该预设后点击“覆盖当前预设”。");
+          return;
+        }
+
+        const now = Date.now();
+        const preset = {
+          id: createPresetId(),
+          name: rawName.length > 36 ? `${rawName.slice(0, 36)}...` : rawName,
+          values: normalizeSettingsSnapshot(collectCurrentSettingsSnapshot()),
+          created_at: now,
+          updated_at: now,
+        };
+        parameterPresets.unshift(preset);
+        parameterPresets = sanitizePresets(parameterPresets);
+        activePresetId = preset.id;
+        presetNameEl.value = "";
+        savePresetState();
+        renderPresetSelect();
+        setStatus(`已保存新预设：${preset.name}`);
+      }
+
+      function updateCurrentPreset() {
+        if (!activePresetId) {
+          setStatus("请先在“参数预设”中选择一个预设。");
+          return;
+        }
+        const preset = findPresetById(activePresetId);
+        if (!preset) {
+          setStatus("未找到当前预设，请重新选择。");
+          return;
+        }
+
+        const rename = (presetNameEl.value || "").trim();
+        if (rename) {
+          preset.name = rename.length > 36 ? `${rename.slice(0, 36)}...` : rename;
+        }
+        preset.values = normalizeSettingsSnapshot(collectCurrentSettingsSnapshot());
+        preset.updated_at = Date.now();
+        parameterPresets = sanitizePresets(parameterPresets);
+        activePresetId = preset.id;
+        presetNameEl.value = "";
+        savePresetState();
+        renderPresetSelect();
+        setStatus(`已覆盖预设：${preset.name}`);
+      }
+
+      function deleteCurrentPreset() {
+        if (!activePresetId) {
+          setStatus("当前没有可删除的预设。");
+          return;
+        }
+        const index = parameterPresets.findIndex((preset) => preset.id === activePresetId);
+        if (index < 0) {
+          activePresetId = "";
+          savePresetState();
+          renderPresetSelect();
+          setStatus("预设不存在，已刷新预设列表。");
+          return;
+        }
+        const removed = parameterPresets[index];
+        parameterPresets.splice(index, 1);
+        activePresetId = parameterPresets[0] ? parameterPresets[0].id : "";
+        const fallback = activePresetId ? findPresetById(activePresetId) : null;
+        presetNameEl.value = fallback ? fallback.name : "";
+        savePresetState();
+        renderPresetSelect();
+        setStatus(`已删除预设：${removed.name}`);
+      }
 
       function sanitizeTurns(items) {
         if (!Array.isArray(items)) return [];
@@ -1222,13 +1725,19 @@
       async function loadModels() {
         const resp = await fetch("/api/models");
         const data = await resp.json();
-        modelEl.innerHTML = "";
-        (data.models || []).forEach((m) => {
-          const option = document.createElement("option");
-          option.value = m.id;
-          option.textContent = m.label;
-          modelEl.appendChild(option);
-        });
+        const models = Array.isArray(data.models) ? data.models : [];
+        serverModels = models
+          .map((m) => ({
+            id: normalizeModelId(m && m.id),
+            label: typeof (m && m.label) === "string" ? m.label : normalizeModelId(m && m.id),
+          }))
+          .filter((m) => m.id);
+
+        const preferred = loadSelectedModel();
+        if (preferred && !hasModelOption(preferred) && !serverModels.some((m) => m.id === preferred)) {
+          addCustomModel(preferred);
+        }
+        renderModelOptions(preferred);
       }
 
       function payload(message) {
@@ -1605,10 +2114,18 @@
         return {
           text: json.reply || "",
           stopped: Boolean(json.stopped),
+          generatedTokens:
+            Number.isInteger(json.generated_tokens) && json.generated_tokens >= 0
+              ? json.generated_tokens
+              : 0,
+          elapsedSeconds:
+            Number.isFinite(json.elapsed_seconds) && json.elapsed_seconds >= 0
+              ? json.elapsed_seconds
+              : 0,
         };
       }
 
-      async function sendStream(data, signal) {
+      async function sendStream(data, signal, onProgress) {
         const resp = await fetch("/api/chat/stream", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1624,6 +2141,8 @@
         let buffer = "";
         let rawReplyText = "";
         let stopped = false;
+        let generatedTokens = 0;
+        let elapsedSeconds = 0;
 
         while (true) {
           const { value, done } = await reader.read();
@@ -1646,13 +2165,33 @@
 
             if (eventName === "token") {
               rawReplyText += dataObj.text || "";
+              if (Number.isInteger(dataObj.generated_tokens) && dataObj.generated_tokens >= 0) {
+                generatedTokens = dataObj.generated_tokens;
+              } else {
+                generatedTokens += 1;
+              }
               setAssistantDraftText(rawReplyText);
+              if (typeof onProgress === "function") {
+                onProgress(generatedTokens);
+              }
             } else if (eventName === "done") {
               rawReplyText = dataObj.text || rawReplyText;
+              if (Number.isInteger(dataObj.generated_tokens) && dataObj.generated_tokens >= 0) {
+                generatedTokens = dataObj.generated_tokens;
+              }
+              if (Number.isFinite(dataObj.elapsed_seconds) && dataObj.elapsed_seconds >= 0) {
+                elapsedSeconds = dataObj.elapsed_seconds;
+              }
               setAssistantDraftText(rawReplyText);
             } else if (eventName === "stopped") {
               stopped = true;
               rawReplyText = dataObj.text || rawReplyText;
+              if (Number.isInteger(dataObj.generated_tokens) && dataObj.generated_tokens >= 0) {
+                generatedTokens = dataObj.generated_tokens;
+              }
+              if (Number.isFinite(dataObj.elapsed_seconds) && dataObj.elapsed_seconds >= 0) {
+                elapsedSeconds = dataObj.elapsed_seconds;
+              }
               setAssistantDraftText(rawReplyText);
             } else if (eventName === "error") {
               throw new Error(dataObj.message || "streaming failed");
@@ -1660,7 +2199,7 @@
           }
         }
 
-        return { text: rawReplyText, stopped };
+        return { text: rawReplyText, stopped, generatedTokens, elapsedSeconds };
       }
 
       sendBtn.addEventListener("click", async () => {
@@ -1692,13 +2231,33 @@
         renderChatFeed({ forceBottom: true });
         saveSessionState();
 
-        setStatus("Generating...（首次运行可能会下载模型，可能需要几分钟）");
+        const generationStartedAt = performance.now();
+        let liveGeneratedTokens = 0;
+        let lastSpeedUpdateAt = 0;
+        const updateLiveSpeed = (force = false) => {
+          if (!streamingEl.checked) return;
+          const now = performance.now();
+          if (!force && now - lastSpeedUpdateAt < 160) return;
+          lastSpeedUpdateAt = now;
+          const elapsedSeconds = Math.max((now - generationStartedAt) / 1000, 0.001);
+          setStatus(`Generating... ${formatGenerationStats(liveGeneratedTokens, elapsedSeconds)}`);
+        };
+
+        if (streamingEl.checked) {
+          setStatus("Generating... 0 tok · 0.0 tok/s（首次运行可能会下载模型）");
+        } else {
+          setStatus("Generating...（非流式模式不显示实时 tok/s）");
+        }
 
         try {
           const data = payload(userMessage);
-          let result = { text: "", stopped: false };
+          let result = { text: "", stopped: false, generatedTokens: 0, elapsedSeconds: 0 };
           if (streamingEl.checked) {
-            result = await sendStream(data, activeAbortController.signal);
+            result = await sendStream(data, activeAbortController.signal, (generatedTokens) => {
+              liveGeneratedTokens = generatedTokens;
+              updateLiveSpeed(false);
+            });
+            updateLiveSpeed(true);
           } else {
             result = await sendOnce(data, activeAbortController.signal);
             setAssistantDraftText(result.text);
@@ -1711,11 +2270,24 @@
             assistantMessage.completed = true;
           }
 
+          const elapsedFromWallClock = Math.max((performance.now() - generationStartedAt) / 1000, 0.001);
+          const finalElapsedSeconds =
+            Number.isFinite(result.elapsedSeconds) && result.elapsedSeconds > 0
+              ? result.elapsedSeconds
+              : elapsedFromWallClock;
+          const finalGeneratedTokens =
+            Number.isInteger(result.generatedTokens) && result.generatedTokens >= 0
+              ? result.generatedTokens
+              : liveGeneratedTokens;
+          const speedHint = formatGenerationStats(finalGeneratedTokens, finalElapsedSeconds);
+
           if (result.stopped || stopRequestedByUser) {
-            setStatus("已停止生成。");
+            setStatus(`已停止生成 · ${speedHint}`);
           } else {
             appendConversationTurnToMemory(userMessage, result.text);
-            setStatus(`Done · 当前会话 ${Math.floor(conversationHistory.length / 2)} 轮`);
+            setStatus(
+              `Done · 当前会话 ${Math.floor(conversationHistory.length / 2)} 轮 · ${speedHint}`,
+            );
           }
         } catch (err) {
           if (stopRequestedByUser || (err && err.name === "AbortError")) {
@@ -1800,6 +2372,86 @@
         setStatus("已取消编辑重试。");
       });
 
+      presetSelectEl.addEventListener("change", () => {
+        const presetId = presetSelectEl.value || "";
+        if (!presetId) {
+          activePresetId = "";
+          presetNameEl.value = "";
+          savePresetState();
+          renderPresetSelect();
+          setStatus("已取消预设绑定，当前参数保持不变。");
+          return;
+        }
+        applyPresetById(presetId);
+      });
+
+      savePresetBtn.addEventListener("click", () => {
+        saveNewPreset();
+      });
+
+      updatePresetBtn.addEventListener("click", () => {
+        updateCurrentPreset();
+      });
+
+      deletePresetBtn.addEventListener("click", () => {
+        deleteCurrentPreset();
+      });
+
+      presetNameEl.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        saveNewPreset();
+      });
+
+      modelEl.addEventListener("change", () => {
+        saveSelectedModel();
+      });
+
+      addModelBtn.addEventListener("click", () => {
+        const modelId = normalizeModelId(customModelIdEl.value);
+        if (!modelId) {
+          setStatus("请输入要添加的模型 ID。");
+          return;
+        }
+        const added = addCustomModel(modelId);
+        renderModelOptions(modelId);
+        modelEl.value = modelId;
+        saveSelectedModel();
+        if (added) {
+          setStatus(`已添加模型：${modelId}`);
+        } else {
+          setStatus(`模型已存在：${modelId}`);
+        }
+      });
+
+      removeModelBtn.addEventListener("click", () => {
+        const typed = normalizeModelId(customModelIdEl.value);
+        const selected = normalizeModelId(modelEl.value);
+        const target = typed || selected;
+        if (!target) {
+          setStatus("没有可删除的模型。");
+          return;
+        }
+        if (!isCustomModelId(target)) {
+          setStatus("只能删除你手动添加的自定义模型。");
+          return;
+        }
+        const removed = removeCustomModel(target);
+        if (!removed) {
+          setStatus("模型不存在或已删除。");
+          return;
+        }
+        renderModelOptions(selected === target ? "" : selected);
+        saveSelectedModel();
+        setStatus(`已删除自定义模型：${target}`);
+      });
+
+      customModelIdEl.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        addModelBtn.click();
+      });
+
       chatFeedEl.addEventListener("scroll", () => {
         autoScrollIfNearBottom = isNearBottom(chatFeedEl);
       });
@@ -1830,6 +2482,8 @@
       loadSavedStreaming();
       loadSavedResponseLanguage();
       loadSavedThinkingMode();
+      loadCustomModelState();
+      loadPresetState();
       loadSessionState();
       renderChatFeed({ forceBottom: true });
       setBusy(false);
@@ -1838,9 +2492,15 @@
         setStatus(`已恢复 ${conversationThreads.length} 个会话（关闭浏览器后自动清空）`);
       }
 
-      loadModels().catch((err) => {
-        setStatus("无法加载模型列表: " + (err.message || String(err)));
-      });
+      loadModels()
+        .then(() => {
+          if (activePresetId) {
+            applyPresetById(activePresetId, { silent: true });
+          }
+        })
+        .catch((err) => {
+          setStatus("无法加载模型列表: " + (err.message || String(err)));
+        });
     </script>
   </body>
 </html>

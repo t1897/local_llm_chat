@@ -9,6 +9,7 @@ It is designed to keep setup simple while still supporting practical chat featur
 - Local-only model inference with `mlx-lm`
 - Multi-turn context-aware conversation
 - Streaming and non-streaming generation
+- Real-time token speed display (`tok/s`) during streaming
 - Thought section and final answer section rendering
 - Thread history (new/switch/delete)
 - Edit-and-regenerate from a previous user turn
@@ -39,6 +40,8 @@ Important:
 - `Send`, `Stop`, and `New Chat`
 - Session thread list with switch/delete
 - User-message `Edit & Regenerate`
+- Parameter presets (save/select/update/delete)
+- Custom model management from UI (add/remove model IDs)
 - Optional streaming output (SSE)
 - Optional thinking mode (model/template dependent)
 - Language forcing (`Auto`, `中文`, `English`, `日本語`, `한국어`)
@@ -77,6 +80,13 @@ You can append additional models to the dropdown by environment variable:
 EXTRA_MODELS="mlx-community/Qwen2.5-7B-Instruct-4bit,mlx-community/Llama-3.2-3B-Instruct-4bit" \
 uvicorn app:app --host 127.0.0.1 --port 8000
 ```
+
+You can also add custom model IDs directly in the UI:
+
+- Enter a model id in `模型管理（自定义模型 ID）`
+- Click `添加模型`
+- The model is saved in browser `localStorage` and appears in the model dropdown
+- `删除当前模型` removes only custom-added models (not built-in defaults)
 
 ## Generation Parameters
 

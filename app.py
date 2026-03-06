@@ -2,6 +2,7 @@ import json
 import os
 import re
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Literal, Tuple
@@ -36,7 +37,6 @@ def get_model_options() -> List[ModelOption]:
 
 
 MODEL_OPTIONS = get_model_options()
-MODEL_MAP = {item.model_id: item for item in MODEL_OPTIONS}
 MODEL_TYPE_ALIASES = {
     "qwen3_5_text": "qwen3_5",
 }
@@ -57,7 +57,7 @@ class ChatTurn(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    model: str = Field(default=DEFAULT_MODEL_ID)
+    model: str = Field(default=DEFAULT_MODEL_ID, min_length=1)
     message: str = Field(min_length=1)
     system_prompt: str = Field(default="")
     response_language: Literal["auto", "zh", "en", "ja", "ko"] = "auto"
@@ -127,8 +127,9 @@ def build_prompt(
 
 
 def get_or_load_model(model_id: str) -> Tuple[object, object]:
-    if model_id not in MODEL_MAP:
-        raise HTTPException(status_code=400, detail=f"Unsupported model: {model_id}")
+    model_id = model_id.strip()
+    if not model_id:
+        raise HTTPException(status_code=400, detail="Model id cannot be empty.")
 
     if model_id in _loaded_models:
         return _loaded_models[model_id]
@@ -340,6 +341,8 @@ def create_app() -> FastAPI:
         )
 
         full_text = ""
+        generated_tokens = 0
+        started_at = time.perf_counter()
         stopped = False
         with _generation_lock:
             set_generation_active(True)
@@ -354,10 +357,19 @@ def create_app() -> FastAPI:
                     logits_processors=logits_processors,
                 ):
                     full_text += delta
+                    generated_tokens += 1
                 stopped = is_generation_stopped()
             finally:
                 set_generation_active(False)
-        return JSONResponse({"reply": full_text, "stopped": stopped})
+        elapsed_seconds = max(time.perf_counter() - started_at, 0.0)
+        return JSONResponse(
+            {
+                "reply": full_text,
+                "stopped": stopped,
+                "generated_tokens": generated_tokens,
+                "elapsed_seconds": elapsed_seconds,
+            }
+        )
 
     @app.post("/api/chat/stream")
     def chat_stream(req: ChatRequest) -> StreamingResponse:
@@ -390,6 +402,8 @@ def create_app() -> FastAPI:
         def stream():
             try:
                 full_text = ""
+                generated_tokens = 0
+                started_at = time.perf_counter()
                 with _generation_lock:
                     set_generation_active(True)
                     try:
@@ -403,14 +417,33 @@ def create_app() -> FastAPI:
                             logits_processors=logits_processors,
                         ):
                             full_text += delta
-                            yield event("token", {"text": delta})
+                            generated_tokens += 1
+                            yield event(
+                                "token",
+                                {"text": delta, "generated_tokens": generated_tokens},
+                            )
                     finally:
                         stopped = is_generation_stopped()
                         set_generation_active(False)
+                elapsed_seconds = max(time.perf_counter() - started_at, 0.0)
                 if stopped:
-                    yield event("stopped", {"text": full_text})
+                    yield event(
+                        "stopped",
+                        {
+                            "text": full_text,
+                            "generated_tokens": generated_tokens,
+                            "elapsed_seconds": elapsed_seconds,
+                        },
+                    )
                 else:
-                    yield event("done", {"text": full_text})
+                    yield event(
+                        "done",
+                        {
+                            "text": full_text,
+                            "generated_tokens": generated_tokens,
+                            "elapsed_seconds": elapsed_seconds,
+                        },
+                    )
             except Exception as exc:  # pragma: no cover
                 yield event("error", {"message": str(exc)})
 
