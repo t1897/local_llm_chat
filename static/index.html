@@ -50,9 +50,35 @@
         flex-direction: column;
       }
 
+      .app-header {
+        margin-bottom: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
       .title {
-        margin: 0 0 10px;
+        margin: 0;
         font-size: 18px;
+      }
+
+      #toggleSettingsBtn {
+        width: auto;
+        min-width: 102px;
+        background: #334155;
+      }
+
+      .settings-panel {
+        display: block;
+      }
+
+      .app-card.settings-collapsed .settings-panel {
+        display: none;
+      }
+
+      .app-card.settings-collapsed .workspace {
+        margin-top: 0;
       }
 
       .settings {
@@ -366,6 +392,14 @@
         margin-top: 8px;
       }
 
+      .assistant-metrics {
+        margin-top: 8px;
+        padding-top: 6px;
+        border-top: 1px dashed var(--border);
+        font-size: 12px;
+        color: var(--muted);
+      }
+
       .composer {
         display: flex;
         flex-direction: column;
@@ -427,6 +461,10 @@
         font-size: 12px;
       }
 
+      #status {
+        display: none;
+      }
+
       @media (max-width: 900px) {
         .settings {
           grid-template-columns: 1fr 1fr;
@@ -456,9 +494,13 @@
   </head>
   <body>
     <div class="app">
-      <div class="card">
-        <h1 class="title">Local AI Chat (MLX)</h1>
-        <div class="settings">
+      <div class="card app-card" id="appCard">
+        <div class="app-header">
+          <h1 class="title">Local AI Chat (MLX)</h1>
+          <button type="button" id="toggleSettingsBtn">折叠设置</button>
+        </div>
+        <div id="settingsPanel" class="settings-panel">
+          <div class="settings">
           <div>
             <label for="presetSelect">参数预设</label>
             <select id="presetSelect"></select>
@@ -539,9 +581,10 @@
               <button type="button" class="secondary" id="deletePresetBtn">删除当前预设</button>
             </div>
           </div>
-          <div class="settings-wide">
-            <label for="systemPrompt">System Prompt</label>
-            <textarea id="systemPrompt" rows="2" placeholder="例如：你是一个简洁、直接的助手"></textarea>
+            <div class="settings-wide">
+              <label for="systemPrompt">System Prompt</label>
+              <textarea id="systemPrompt" rows="2" placeholder="例如：你是一个简洁、直接的助手"></textarea>
+            </div>
           </div>
         </div>
 
@@ -574,6 +617,8 @@
 	    </div>
 
     <script>
+      const appCardEl = document.getElementById("appCard");
+      const toggleSettingsBtn = document.getElementById("toggleSettingsBtn");
       const modelEl = document.getElementById("model");
       const presetSelectEl = document.getElementById("presetSelect");
       const presetNameEl = document.getElementById("presetName");
@@ -618,6 +663,7 @@
       const ACTIVE_PRESET_STORAGE_KEY = "local_mlx_chat.active_parameter_preset_v1";
       const CUSTOM_MODELS_STORAGE_KEY = "local_mlx_chat.custom_models_v1";
       const SELECTED_MODEL_STORAGE_KEY = "local_mlx_chat.selected_model_v1";
+      const SETTINGS_COLLAPSED_STORAGE_KEY = "local_mlx_chat.settings_collapsed_v1";
 
       let conversationHistory = [];
       let chatMessages = [];
@@ -626,6 +672,7 @@
       let activePresetId = "";
       let serverModels = [];
       let customModels = [];
+      let settingsCollapsed = false;
       let activeThreadId = "";
       let nextMessageId = 1;
       let activeAssistantMessageId = null;
@@ -633,6 +680,7 @@
       let stopRequestedByUser = false;
       let autoScrollIfNearBottom = true;
       let editingUserMessageId = null;
+      const SHOW_STATUS = false;
 
       function setBusy(isBusy) {
         sendBtn.disabled = isBusy;
@@ -654,14 +702,70 @@
       }
 
       function setStatus(text) {
+        if (!SHOW_STATUS) {
+          statusEl.textContent = "";
+          return;
+        }
         statusEl.textContent = text || "";
       }
 
-      function formatGenerationStats(tokens, elapsedSeconds) {
-        const safeTokens = Number.isFinite(tokens) && tokens >= 0 ? Math.round(tokens) : 0;
-        const safeElapsed = Number.isFinite(elapsedSeconds) && elapsedSeconds > 0 ? elapsedSeconds : 0;
-        const tps = safeElapsed > 0 ? safeTokens / safeElapsed : 0;
-        return `${safeTokens} tok · ${tps.toFixed(1)} tok/s`;
+      function applySettingsCollapsed(collapsed, options = {}) {
+        settingsCollapsed = Boolean(collapsed);
+        appCardEl.classList.toggle("settings-collapsed", settingsCollapsed);
+        toggleSettingsBtn.textContent = settingsCollapsed ? "展开设置" : "折叠设置";
+        toggleSettingsBtn.title = settingsCollapsed ? "展开参数设置面板" : "折叠参数设置面板";
+        if (options.persist !== false) {
+          try {
+            localStorage.setItem(SETTINGS_COLLAPSED_STORAGE_KEY, settingsCollapsed ? "1" : "0");
+          } catch (_) {
+            // Ignore storage errors.
+          }
+        }
+      }
+
+      function loadSettingsCollapsed() {
+        try {
+          const saved = localStorage.getItem(SETTINGS_COLLAPSED_STORAGE_KEY);
+          applySettingsCollapsed(saved === "1", { persist: false });
+        } catch (_) {
+          applySettingsCollapsed(false, { persist: false });
+        }
+      }
+
+      function formatTTFTAndLiveTPS(ttftSeconds, liveTps, tokens) {
+        const safeTtft = Number.isFinite(ttftSeconds) && ttftSeconds >= 0 ? ttftSeconds : null;
+        const safeTps = Number.isFinite(liveTps) && liveTps >= 0 ? liveTps : null;
+        const safeTokens = Number.isFinite(tokens) && tokens >= 0 ? Math.round(tokens) : null;
+        const labels = [];
+        if (safeTtft !== null) {
+          labels.push(`TTFT ${safeTtft.toFixed(2)}s`);
+        }
+        if (safeTps !== null) {
+          labels.push(`实时 ${safeTps.toFixed(1)} tok/s`);
+        }
+        if (safeTokens !== null) {
+          labels.push(`${safeTokens} tok`);
+        }
+        return labels.join(" · ");
+      }
+
+      function formatAssistantMetricsText(msg) {
+        const tokens = Number.isInteger(msg.generatedTokens) && msg.generatedTokens >= 0 ? msg.generatedTokens : 0;
+        const hasTTFT = Number.isFinite(msg.ttftSeconds) && msg.ttftSeconds >= 0;
+        const hasLiveTps = Number.isFinite(msg.liveTps) && msg.liveTps >= 0;
+
+        if (!msg.completed && !hasTTFT && tokens === 0) {
+          return "统计中：等待首字...";
+        }
+        if (!hasTTFT && !hasLiveTps && tokens === 0) {
+          return "";
+        }
+
+        return formatTTFTAndLiveTPS(
+          hasTTFT ? msg.ttftSeconds : null,
+          hasLiveTps ? msg.liveTps : null,
+          tokens,
+        );
       }
 
       function isNearBottom(el, threshold = 56) {
@@ -1330,6 +1434,13 @@
             text: item.text,
             showThought: Boolean(item.showThought),
             stopped: Boolean(item.stopped),
+            generatedTokens:
+              Number.isInteger(item.generatedTokens) && item.generatedTokens >= 0
+                ? item.generatedTokens
+                : 0,
+            ttftSeconds:
+              Number.isFinite(item.ttftSeconds) && item.ttftSeconds >= 0 ? item.ttftSeconds : null,
+            liveTps: Number.isFinite(item.liveTps) && item.liveTps >= 0 ? item.liveTps : null,
             thoughtToggled: Boolean(item.thoughtToggled),
             thoughtScrollTop:
               Number.isFinite(item.thoughtScrollTop) && item.thoughtScrollTop >= 0
@@ -1866,6 +1977,13 @@
           text: text || "",
           showThought: Boolean(extra.showThought),
           stopped: Boolean(extra.stopped),
+          generatedTokens:
+            Number.isInteger(extra.generatedTokens) && extra.generatedTokens >= 0
+              ? extra.generatedTokens
+              : 0,
+          ttftSeconds:
+            Number.isFinite(extra.ttftSeconds) && extra.ttftSeconds >= 0 ? extra.ttftSeconds : null,
+          liveTps: Number.isFinite(extra.liveTps) && extra.liveTps >= 0 ? extra.liveTps : null,
           thoughtToggled: Boolean(extra.thoughtToggled),
           thoughtScrollTop:
             Number.isFinite(extra.thoughtScrollTop) && extra.thoughtScrollTop >= 0
@@ -2009,6 +2127,14 @@
         answerContent.className = "assistant-content answer-content";
         answerContent.textContent = answer || (msg.completed === false ? "（等待最终输出...）" : "");
         card.appendChild(answerContent);
+
+        const metricsText = formatAssistantMetricsText(msg);
+        if (metricsText) {
+          const metrics = document.createElement("div");
+          metrics.className = "assistant-metrics";
+          metrics.textContent = metricsText;
+          card.appendChild(metrics);
+        }
 
         if (msg.stopped) {
           const stoppedHint = document.createElement("div");
@@ -2172,7 +2298,7 @@
               }
               setAssistantDraftText(rawReplyText);
               if (typeof onProgress === "function") {
-                onProgress(generatedTokens);
+                onProgress({ generatedTokens });
               }
             } else if (eventName === "done") {
               rawReplyText = dataObj.text || rawReplyText;
@@ -2233,31 +2359,60 @@
 
         const generationStartedAt = performance.now();
         let liveGeneratedTokens = 0;
-        let lastSpeedUpdateAt = 0;
-        const updateLiveSpeed = (force = false) => {
-          if (!streamingEl.checked) return;
-          const now = performance.now();
-          if (!force && now - lastSpeedUpdateAt < 160) return;
-          lastSpeedUpdateAt = now;
-          const elapsedSeconds = Math.max((now - generationStartedAt) / 1000, 0.001);
-          setStatus(`Generating... ${formatGenerationStats(liveGeneratedTokens, elapsedSeconds)}`);
+        let firstTokenAt = null;
+        let latestInstantTps = null;
+        const speedSamples = [];
+        const SPEED_WINDOW_MS = 1200;
+
+        const getTTFTSeconds = () => {
+          if (firstTokenAt === null) return null;
+          return Math.max((firstTokenAt - generationStartedAt) / 1000, 0);
         };
 
-        if (streamingEl.checked) {
-          setStatus("Generating... 0 tok · 0.0 tok/s（首次运行可能会下载模型）");
-        } else {
-          setStatus("Generating...（非流式模式不显示实时 tok/s）");
-        }
+        const pushSpeedSample = (nowMs, generatedTokens) => {
+          if (!Number.isFinite(generatedTokens) || generatedTokens < 0) return;
+          speedSamples.push({ t: nowMs, n: generatedTokens });
+          const cutoff = nowMs - SPEED_WINDOW_MS;
+          while (speedSamples.length > 2 && speedSamples[0].t < cutoff) {
+            speedSamples.shift();
+          }
+          if (speedSamples.length >= 2) {
+            const first = speedSamples[0];
+            const last = speedSamples[speedSamples.length - 1];
+            const dt = Math.max((last.t - first.t) / 1000, 0);
+            const dn = Math.max(last.n - first.n, 0);
+            if (dt > 0 && dn >= 0) {
+              latestInstantTps = dn / dt;
+            }
+          }
+        };
+
+        setStatus("Generating...");
 
         try {
           const data = payload(userMessage);
           let result = { text: "", stopped: false, generatedTokens: 0, elapsedSeconds: 0 };
           if (streamingEl.checked) {
-            result = await sendStream(data, activeAbortController.signal, (generatedTokens) => {
+            result = await sendStream(data, activeAbortController.signal, ({ generatedTokens }) => {
               liveGeneratedTokens = generatedTokens;
-              updateLiveSpeed(false);
+              const nowMs = performance.now();
+              let firstTokenJustArrived = false;
+              if (firstTokenAt === null) {
+                firstTokenAt = nowMs;
+                firstTokenJustArrived = true;
+              }
+              pushSpeedSample(nowMs, generatedTokens);
+
+              const assistantMessage = getChatMessageById(activeAssistantMessageId);
+              if (assistantMessage) {
+                assistantMessage.generatedTokens = generatedTokens;
+                assistantMessage.ttftSeconds = getTTFTSeconds();
+                assistantMessage.liveTps = latestInstantTps;
+              }
+              if (firstTokenJustArrived) {
+                renderChatFeed();
+              }
             });
-            updateLiveSpeed(true);
           } else {
             result = await sendOnce(data, activeAbortController.signal);
             setAssistantDraftText(result.text);
@@ -2270,24 +2425,24 @@
             assistantMessage.completed = true;
           }
 
-          const elapsedFromWallClock = Math.max((performance.now() - generationStartedAt) / 1000, 0.001);
-          const finalElapsedSeconds =
-            Number.isFinite(result.elapsedSeconds) && result.elapsedSeconds > 0
-              ? result.elapsedSeconds
-              : elapsedFromWallClock;
           const finalGeneratedTokens =
             Number.isInteger(result.generatedTokens) && result.generatedTokens >= 0
               ? result.generatedTokens
               : liveGeneratedTokens;
-          const speedHint = formatGenerationStats(finalGeneratedTokens, finalElapsedSeconds);
+          const finalTTFTSeconds = getTTFTSeconds();
+          const finalLiveTps = streamingEl.checked ? latestInstantTps : null;
 
           if (result.stopped || stopRequestedByUser) {
-            setStatus(`已停止生成 · ${speedHint}`);
+            setStatus("已停止生成。");
           } else {
             appendConversationTurnToMemory(userMessage, result.text);
-            setStatus(
-              `Done · 当前会话 ${Math.floor(conversationHistory.length / 2)} 轮 · ${speedHint}`,
-            );
+            setStatus(`Done · 当前会话 ${Math.floor(conversationHistory.length / 2)} 轮`);
+          }
+
+          if (assistantMessage) {
+            assistantMessage.generatedTokens = finalGeneratedTokens;
+            assistantMessage.ttftSeconds = finalTTFTSeconds;
+            assistantMessage.liveTps = finalLiveTps;
           }
         } catch (err) {
           if (stopRequestedByUser || (err && err.name === "AbortError")) {
@@ -2295,6 +2450,9 @@
             if (assistantMessage) {
               assistantMessage.stopped = true;
               assistantMessage.completed = true;
+              assistantMessage.generatedTokens = liveGeneratedTokens;
+              assistantMessage.ttftSeconds = getTTFTSeconds();
+              assistantMessage.liveTps = streamingEl.checked ? latestInstantTps : null;
             }
             setStatus("已停止生成。");
           } else {
@@ -2446,6 +2604,15 @@
         setStatus(`已删除自定义模型：${target}`);
       });
 
+      toggleSettingsBtn.addEventListener("click", () => {
+        applySettingsCollapsed(!settingsCollapsed);
+        if (settingsCollapsed) {
+          setStatus("已折叠设置面板。");
+        } else {
+          setStatus("已展开设置面板。");
+        }
+      });
+
       customModelIdEl.addEventListener("keydown", (event) => {
         if (event.key !== "Enter") return;
         event.preventDefault();
@@ -2482,6 +2649,7 @@
       loadSavedStreaming();
       loadSavedResponseLanguage();
       loadSavedThinkingMode();
+      loadSettingsCollapsed();
       loadCustomModelState();
       loadPresetState();
       loadSessionState();
